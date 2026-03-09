@@ -1,9 +1,18 @@
 import sqlite3
 import os
+import sys
 from datetime import datetime
 from typing import Optional, List, Dict
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shows.db")
+
+def _data_dir() -> str:
+    """Directory for user data (db). Next to the exe when frozen, else script dir."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+DB_PATH = os.path.join(_data_dir(), "shows.db")
 
 
 def get_connection() -> sqlite3.Connection:

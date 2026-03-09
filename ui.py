@@ -3,9 +3,24 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import xml.etree.ElementTree as ET
 from tkinter import messagebox, filedialog
 from typing import Optional
+
+
+def _resource_dir() -> str:
+    """Bundled read-only assets (icons). Uses _MEIPASS when frozen by PyInstaller."""
+    if getattr(sys, "frozen", False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _data_dir() -> str:
+    """User-writable data (posters, config). Always next to the exe / script."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 import aggdraw
 from PIL import Image, ImageDraw, ImageOps
@@ -28,8 +43,8 @@ DANGER_HVR  = "#a93226"
 GOLD        = "#FFD700"
 GOLD_DIM    = "#444433"
 
-POSTER_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "posters")
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+POSTER_DIR  = os.path.join(_data_dir(), "posters")
+CONFIG_PATH = os.path.join(_data_dir(), "config.json")
 
 os.makedirs(POSTER_DIR, exist_ok=True)
 
@@ -73,7 +88,7 @@ def _load_poster_image(poster_path: str) -> Optional[ctk.CTkImage]:
 
 # ── Icon helpers ──────────────────────────────────────────────────────────────
 
-ICONS_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+ICONS_DIR   = os.path.join(_resource_dir(), "icons")
 _SVG_FILES  = {"edit": "edit-2.svg", "delete": "trash.svg"}
 _ICON_CACHE: dict = {}
 
