@@ -2,10 +2,12 @@ import colorsys
 import hashlib
 import json
 import os
+import shutil
 from datetime import datetime
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 from typing import Optional
 
+from PIL import Image, ImageOps
 import customtkinter as ctk
 
 import database
@@ -21,44 +23,77 @@ CARD_BG     = "#1a1b2e"
 HEADER_BG   = "#0f0f1a"
 DANGER      = "#c0392b"
 DANGER_HVR  = "#a93226"
+GOLD        = "#FFD700"
+GOLD_DIM    = "#444433"
 
+POSTER_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "posters")
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+os.makedirs(POSTER_DIR, exist_ok=True)
+
+POSTER_W, POSTER_H = 80, 112   # display size on card
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _poster_color(name: str) -> str:
-    """Generate a stable, pleasant colour from a show/movie name."""
     digest = hashlib.md5(name.lower().encode()).hexdigest()
-    hue = int(digest[:8], 16) / 0xFFFFFFFF
+    hue    = int(digest[:8], 16) / 0xFFFFFFFF
     r, g, b = colorsys.hsv_to_rgb(hue, 0.55, 0.68)
-    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+    return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
 def _fmt_time(seconds: int) -> str:
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
+    h, rem = divmod(max(0, seconds), 3600)
+    m, s   = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _load_poster_image(poster_path: str) -> Optional[ctk.CTkImage]:
+    """Load a user-supplied poster and fit it to POSTER_W × POSTER_H."""
+    if not poster_path or not os.path.isfile(poster_path):
+        return None
+    try:
+        img = Image.open(poster_path).convert("RGB")
+        img = ImageOps.fit(img, (POSTER_W, POSTER_H), Image.LANCZOS)
+        return ctk.CTkImage(light_image=img, dark_image=img, size=(POSTER_W, POSTER_H))
+    except Exception:
+        return None
+
+
+def _copy_poster(src_path: str, show_id: int) -> str:
+    """Copy the chosen image into the posters folder and return the new path."""
+    ext  = os.path.splitext(src_path)[1].lower()
+    dest = os.path.join(POSTER_DIR, f"{show_id}{ext}")
+    shutil.copy2(src_path, dest)
+    return dest
 
 
 # ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _Poster(ctk.CTkFrame):
-    """Coloured placeholder poster showing the entry's initials."""
+    """Poster area: shows a user image if available, else a coloured initial tile."""
 
-    def __init__(self, parent, name: str, width: int = 80, height: int = 112, **kw):
-        super().__init__(parent, width=width, height=height,
-                         fg_color=_poster_color(name), corner_radius=10, **kw)
+    def __init__(self, parent, name: str, poster_path: str = "", **kw):
+        super().__init__(parent, width=POSTER_W, height=POSTER_H,
+                         corner_radius=10, **kw)
         self.pack_propagate(False)
         self.grid_propagate(False)
-        initials = "".join(w[0].upper() for w in name.split() if w)[:2]
-        ctk.CTkLabel(self, text=initials,
-                     font=ctk.CTkFont(size=26, weight="bold"),
-                     text_color="white").pack(expand=True)
+
+        img = _load_poster_image(poster_path)
+        if img:
+            self.configure(fg_color="black")
+            ctk.CTkLabel(self, text="", image=img).pack(expand=True)
+        else:
+            self.configure(fg_color=_poster_color(name))
+            initials = "".join(w[0].upper() for w in name.split() if w)[:2]
+            ctk.CTkLabel(self, text=initials,
+                         font=ctk.CTkFont(size=26, weight="bold"),
+                         text_color="white").pack(expand=True)
 
 
 class _Counter(ctk.CTkFrame):
-    """Inline  [−]  value  [+]  control with a label."""
+    """Inline  [−]  value  [+]  row with a label."""
 
     def __init__(self, parent, label: str, value: int, on_change, **kw):
         super().__init__(parent, fg_color="transparent", **kw)
@@ -88,50 +123,80 @@ class _Counter(ctk.CTkFrame):
         return self._val
 
 
+class _StarPicker(ctk.CTkFrame):
+    """Clickable 5-star rating widget. Click same star again to clear."""
+
+    def __init__(self, parent, initial: int = 0, **kw):
+        super().__init__(parent, fg_color="transparent", **kw)
+        self._rating = initial
+        self._btns: list = []
+        for i in range(1, 6):
+            b = ctk.CTkButton(
+                self, text="★", width=34, height=34,
+                fg_color="transparent", hover_color="gray18",
+                font=ctk.CTkFont(size=20),
+                text_color=GOLD if i <= initial else GOLD_DIM,
+                command=lambda v=i: self._click(v),
+            )
+            b.pack(side="left", padx=1)
+            self._btns.append(b)
+
+    def _click(self, v: int):
+        self._rating = 0 if self._rating == v else v
+        self._redraw()
+
+    def _redraw(self):
+        for i, b in enumerate(self._btns):
+            b.configure(text_color=GOLD if i < self._rating else GOLD_DIM)
+
+    @property
+    def rating(self) -> int:
+        return self._rating
+
+
 # ── Show / Movie Card ─────────────────────────────────────────────────────────
 
 class ShowCard(ctk.CTkFrame):
     def __init__(self, parent, show: dict, on_edit, on_delete, **kw):
         super().__init__(parent, corner_radius=14, fg_color=CARD_BG, **kw)
-        self._show = show.copy()
-        self._on_edit = on_edit
+        self._show     = show.copy()
+        self._on_edit   = on_edit
         self._on_delete = on_delete
         self._build()
 
-    # ── Build UI ──────────────────────────────────────────────────────────────
-
     def _build(self):
-        show = self._show
-        is_tv = show.get("type", "show") == "show"
+        show   = self._show
+        is_tv  = show.get("type", "show") == "show"
 
         outer = ctk.CTkFrame(self, fg_color="transparent")
         outer.pack(fill="both", expand=True, padx=14, pady=14)
 
-        # Left: coloured poster
-        _Poster(outer, show["name"]).pack(side="left", anchor="n", padx=(0, 14))
+        # Left: poster
+        _Poster(outer, show["name"],
+                poster_path=show.get("poster_path", "") or "").pack(
+            side="left", anchor="n", padx=(0, 14))
 
         # Right: content
         right = ctk.CTkFrame(outer, fg_color="transparent")
         right.pack(side="left", fill="both", expand=True)
 
         # Name + type badge
-        header_row = ctk.CTkFrame(right, fg_color="transparent")
-        header_row.pack(fill="x")
-        ctk.CTkLabel(header_row, text=show["name"],
+        hdr = ctk.CTkFrame(right, fg_color="transparent")
+        hdr.pack(fill="x")
+        ctk.CTkLabel(hdr, text=show["name"],
                      font=ctk.CTkFont(size=14, weight="bold"),
                      anchor="w").pack(side="left")
-        badge = "📺 TV Show" if is_tv else "🎬 Movie"
-        ctk.CTkLabel(header_row, text=badge,
+        ctk.CTkLabel(hdr, text="📺 TV Show" if is_tv else "🎬 Movie",
                      font=ctk.CTkFont(size=10),
                      text_color="gray50").pack(side="right")
 
-        # Big progress display
+        # Big progress label
         if is_tv:
-            prog_text = f"S{show['current_season']:02d}  E{show['current_episode']:02d}"
+            prog = f"S{show['current_season']:02d}  E{show['current_episode']:02d}"
         else:
-            prog_text = _fmt_time(show.get("watch_time_seconds", 0))
+            prog = _fmt_time(show.get("watch_time_seconds", 0))
 
-        self._prog_lbl = ctk.CTkLabel(right, text=prog_text,
+        self._prog_lbl = ctk.CTkLabel(right, text=prog,
                                        font=ctk.CTkFont(size=26, weight="bold"),
                                        text_color=ACCENT, anchor="w")
         self._prog_lbl.pack(fill="x", pady=(4, 6))
@@ -149,15 +214,33 @@ class ShowCard(ctk.CTkFrame):
         else:
             t = show.get("watch_time_seconds", 0)
             h, m, s = t // 3600, (t % 3600) // 60, t % 60
-            self._hours_ctr = _Counter(right, "Hours", h,
-                                        lambda d: self._adjust("hours", d))
+            self._hours_ctr = _Counter(right, "Hours",   h,
+                                        lambda d: self._adjust("hours",   d))
             self._hours_ctr.pack(anchor="w", pady=2)
-            self._mins_ctr = _Counter(right, "Minutes", m,
-                                       lambda d: self._adjust("minutes", d))
+            self._mins_ctr  = _Counter(right, "Minutes", m,
+                                        lambda d: self._adjust("minutes", d))
             self._mins_ctr.pack(anchor="w", pady=2)
-            self._secs_ctr = _Counter(right, "Seconds", s,
-                                       lambda d: self._adjust("seconds", d))
+            self._secs_ctr  = _Counter(right, "Seconds", s,
+                                        lambda d: self._adjust("seconds", d))
             self._secs_ctr.pack(anchor="w", pady=2)
+
+        # Star rating (only if rated)
+        rating = show.get("rating", 0) or 0
+        if rating:
+            ctk.CTkLabel(right,
+                         text="★" * rating + "☆" * (5 - rating),
+                         font=ctk.CTkFont(size=13),
+                         text_color=GOLD,
+                         anchor="w").pack(fill="x", pady=(4, 0))
+
+        # Description (only if set, single line)
+        desc = (show.get("description") or "").strip()
+        if desc:
+            preview = desc if len(desc) <= 55 else desc[:52] + "…"
+            ctk.CTkLabel(right, text=preview,
+                         font=ctk.CTkFont(size=10),
+                         text_color="gray50",
+                         anchor="w").pack(fill="x")
 
         # Last watched
         lw = show.get("last_watched") or ""
@@ -169,9 +252,9 @@ class ShowCard(ctk.CTkFrame):
         ctk.CTkLabel(right,
                      text=f"Last watched  {lw}" if lw else "Not watched yet",
                      font=ctk.CTkFont(size=10), text_color="gray50",
-                     anchor="w").pack(fill="x", pady=(6, 6))
+                     anchor="w").pack(fill="x", pady=(4, 6))
 
-        # Action buttons
+        # Buttons
         btn_row = ctk.CTkFrame(right, fg_color="transparent")
         btn_row.pack(anchor="w")
         ctk.CTkButton(btn_row, text="Edit", width=60, height=28,
@@ -182,7 +265,7 @@ class ShowCard(ctk.CTkFrame):
                       fg_color=DANGER, hover_color=DANGER_HVR,
                       command=lambda: self._on_delete(self._show)).pack(side="left")
 
-    # ── Adjust logic ──────────────────────────────────────────────────────────
+    # ── Adjust ────────────────────────────────────────────────────────────────
 
     def _adjust(self, field: str, delta: int):
         show = self._show
@@ -291,53 +374,57 @@ class EditDialog(ctk.CTkToplevel):
         super().__init__(parent)
         is_new = entry is None
         self.title("Add Entry" if is_new else f"Edit  —  {entry['name']}")
-        self.geometry("390x420")
+        self.geometry("420x560")
         self.resizable(False, False)
         self.grab_set()
         self.lift()
 
-        self._entry = entry
+        self._entry   = entry
         self._on_save = on_save
+        # pending poster path chosen this session (not yet saved to DB)
+        self._pending_poster: str = entry.get("poster_path", "") or "" if entry else ""
 
         initial_type = "show" if entry is None else entry.get("type", "show")
-        t = 0 if entry is None else entry.get("watch_time_seconds", 0)
+        t = 0 if entry is None else (entry.get("watch_time_seconds") or 0)
+        existing_rating = 0 if entry is None else (entry.get("rating") or 0)
+        existing_desc   = "" if entry is None else (entry.get("description") or "")
 
-        # Title
-        title_text = "Add New Entry" if is_new else f"Edit  ·  {entry['name']}"
-        ctk.CTkLabel(self, text=title_text,
-                     font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(20, 10))
+        # ── Title ─────────────────────────────────────────────────────────────
+        ctk.CTkLabel(self,
+                     text="Add New Entry" if is_new else f"Edit  ·  {entry['name']}",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(18, 8))
 
-        # Type selector
+        # ── Type selector ──────────────────────────────────────────────────────
         self._type_seg = ctk.CTkSegmentedButton(
             self, values=["TV Show", "Movie"],
             command=self._on_type_change)
         self._type_seg.set("TV Show" if initial_type == "show" else "Movie")
-        self._type_seg.pack(pady=(0, 14))
+        self._type_seg.pack(pady=(0, 10))
 
-        # Form grid
+        # ── Form (grid) ────────────────────────────────────────────────────────
         self._form = ctk.CTkFrame(self, fg_color="transparent")
-        self._form.pack(padx=40, fill="x")
+        self._form.pack(padx=36, fill="x")
         self._form.columnconfigure(1, weight=1)
 
-        # Row 0: Name (always visible)
+        # Row 0: Name
         ctk.CTkLabel(self._form, text="Name:", anchor="w").grid(
-            row=0, column=0, sticky="w", pady=8)
+            row=0, column=0, sticky="w", pady=7)
         self._name_var = ctk.StringVar(value="" if is_new else entry["name"])
         ctk.CTkEntry(self._form, textvariable=self._name_var).grid(
-            row=0, column=1, sticky="ew", padx=(12, 0), pady=8)
+            row=0, column=1, sticky="ew", padx=(12, 0), pady=7)
 
-        # Rows 1-2: TV Show fields
+        # TV Show rows
         self._season_lbl = ctk.CTkLabel(self._form, text="Season:", anchor="w")
         self._season_var = ctk.StringVar(
-            value=str(1 if is_new else entry.get("current_season", 1)))
+            value=str(1 if is_new else (entry.get("current_season") or 1)))
         self._season_ent = ctk.CTkEntry(self._form, textvariable=self._season_var, width=110)
 
         self._ep_lbl = ctk.CTkLabel(self._form, text="Episode:", anchor="w")
         self._ep_var = ctk.StringVar(
-            value=str(1 if is_new else entry.get("current_episode", 1)))
+            value=str(1 if is_new else (entry.get("current_episode") or 1)))
         self._ep_ent = ctk.CTkEntry(self._form, textvariable=self._ep_var, width=110)
 
-        # Rows 1-3: Movie fields
+        # Movie rows
         self._hours_lbl = ctk.CTkLabel(self._form, text="Hours:", anchor="w")
         self._hours_var = ctk.StringVar(value=str(t // 3600))
         self._hours_ent = ctk.CTkEntry(self._form, textvariable=self._hours_var, width=110)
@@ -350,7 +437,7 @@ class EditDialog(ctk.CTkToplevel):
         self._secs_var = ctk.StringVar(value=str(t % 60))
         self._secs_ent = ctk.CTkEntry(self._form, textvariable=self._secs_var, width=110)
 
-        # Grid all dynamic widgets once so grid_remove() works later
+        # Grid all dynamic rows once so grid_remove() works later
         for (lbl, ent), row in zip(
             [(self._season_lbl, self._season_ent),
              (self._ep_lbl,     self._ep_ent),
@@ -359,31 +446,90 @@ class EditDialog(ctk.CTkToplevel):
              (self._secs_lbl,   self._secs_ent)],
             [1, 2, 1, 2, 3],
         ):
-            lbl.grid(row=row, column=0, sticky="w", pady=8)
-            ent.grid(row=row, column=1, sticky="w", padx=(12, 0), pady=8)
+            lbl.grid(row=row, column=0, sticky="w", pady=7)
+            ent.grid(row=row, column=1, sticky="w", padx=(12, 0), pady=7)
 
-        # Apply initial visibility
-        self._on_type_change()
+        self._on_type_change()  # apply initial visibility
 
-        # Buttons
+        # ── Poster ────────────────────────────────────────────────────────────
+        poster_row = ctk.CTkFrame(self, fg_color="transparent")
+        poster_row.pack(padx=36, fill="x", pady=(6, 0))
+
+        ctk.CTkLabel(poster_row, text="Poster:", anchor="w",
+                     width=60).pack(side="left")
+
+        self._poster_lbl = ctk.CTkLabel(
+            poster_row,
+            text=self._short_poster_name(self._pending_poster),
+            font=ctk.CTkFont(size=11), text_color="gray50",
+            anchor="w")
+        self._poster_lbl.pack(side="left", padx=(10, 0), expand=True, fill="x")
+
+        ctk.CTkButton(poster_row, text="Browse…", width=80, height=28,
+                      font=ctk.CTkFont(size=12),
+                      fg_color="gray22", hover_color="gray32",
+                      command=self._browse_poster).pack(side="right")
+
+        # ── Rating ────────────────────────────────────────────────────────────
+        rating_row = ctk.CTkFrame(self, fg_color="transparent")
+        rating_row.pack(padx=36, fill="x", pady=(10, 0))
+        ctk.CTkLabel(rating_row, text="Rating:", anchor="w",
+                     width=60).pack(side="left")
+        self._star_picker = _StarPicker(rating_row, initial=existing_rating)
+        self._star_picker.pack(side="left", padx=(10, 0))
+        ctk.CTkLabel(rating_row, text="/ 5",
+                     font=ctk.CTkFont(size=11), text_color="gray50").pack(side="left", padx=(6, 0))
+
+        # ── Notes ─────────────────────────────────────────────────────────────
+        ctk.CTkLabel(self, text="Notes  (optional):", anchor="w",
+                     font=ctk.CTkFont(size=12)).pack(padx=36, fill="x", pady=(10, 2))
+        self._desc_box = ctk.CTkTextbox(self, height=64,
+                                         font=ctk.CTkFont(size=12),
+                                         corner_radius=8)
+        self._desc_box.pack(padx=36, fill="x")
+        if existing_desc:
+            self._desc_box.insert("1.0", existing_desc)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
         btns = ctk.CTkFrame(self, fg_color="transparent")
-        btns.pack(pady=20)
+        btns.pack(pady=16)
         ctk.CTkButton(btns, text="Save", width=110,
                       command=self._save).pack(side="left", padx=6)
         ctk.CTkButton(btns, text="Cancel", width=110,
                       fg_color="gray25", hover_color="gray35",
                       command=lambda: self.after(10, self.destroy)).pack(side="left", padx=6)
 
+    # ── Poster helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _short_poster_name(path: str) -> str:
+        if not path:
+            return "None"
+        return os.path.basename(path)
+
+    def _browse_poster(self):
+        path = filedialog.askopenfilename(
+            parent=self,
+            title="Choose Poster Image",
+            filetypes=[("Images", "*.jpg *.jpeg *.png *.webp *.bmp"), ("All files", "*.*")],
+        )
+        if path:
+            self._pending_poster = path
+            self._poster_lbl.configure(text=self._short_poster_name(path))
+
+    # ── Type toggle ───────────────────────────────────────────────────────────
+
     def _on_type_change(self, _=None):
         is_tv = self._type_seg.get() == "TV Show"
-        tv_widgets     = [self._season_lbl, self._season_ent, self._ep_lbl, self._ep_ent]
-        movie_widgets  = [self._hours_lbl, self._hours_ent,
-                          self._mins_lbl, self._mins_ent,
-                          self._secs_lbl, self._secs_ent]
-        for w in (tv_widgets if is_tv else movie_widgets):
+        tv_w  = [self._season_lbl, self._season_ent, self._ep_lbl,  self._ep_ent]
+        mv_w  = [self._hours_lbl,  self._hours_ent,  self._mins_lbl, self._mins_ent,
+                 self._secs_lbl,   self._secs_ent]
+        for w in (tv_w if is_tv else mv_w):
             w.grid()
-        for w in (movie_widgets if is_tv else tv_widgets):
+        for w in (mv_w if is_tv else tv_w):
             w.grid_remove()
+
+    # ── Save ─────────────────────────────────────────────────────────────────
 
     def _save(self):
         name = self._name_var.get().strip()
@@ -392,14 +538,19 @@ class EditDialog(ctk.CTkToplevel):
             return
 
         is_tv = self._type_seg.get() == "TV Show"
+        rating  = self._star_picker.rating
+        desc    = self._desc_box.get("1.0", "end-1c").strip()
+
         if is_tv:
             try:
                 season  = int(self._season_var.get())
                 episode = int(self._ep_var.get())
             except ValueError:
-                messagebox.showerror("Error", "Season and episode must be numbers.", parent=self)
+                messagebox.showerror("Error",
+                                     "Season and episode must be numbers.", parent=self)
                 return
-            self._on_save(name, "show", season, episode, 0, self._entry)
+            self._on_save(name, "show", season, episode, 0,
+                          rating, desc, self._pending_poster, self._entry)
         else:
             try:
                 h = int(self._hours_var.get())
@@ -409,7 +560,8 @@ class EditDialog(ctk.CTkToplevel):
                 messagebox.showerror("Error",
                                      "Hours, minutes, and seconds must be numbers.", parent=self)
                 return
-            self._on_save(name, "movie", 1, 1, h * 3600 + m * 60 + s, self._entry)
+            self._on_save(name, "movie", 1, 1, h * 3600 + m * 60 + s,
+                          rating, desc, self._pending_poster, self._entry)
 
         self.after(10, self.destroy)
 
@@ -424,13 +576,14 @@ class App(ctk.CTk):
         self.minsize(680, 440)
 
         database.init_db()
-        self._config = self._load_config()
+        self._config   = self._load_config()
         self._notif_job: Optional[str] = None
 
         self._monitor = VLCMonitor(
             self._config["host"], self._config["port"], self._config["password"]
         )
-        self._monitor.on_episode_detected = self._on_episode_detected
+        self._monitor.on_episode_detected  = self._on_episode_detected
+        self._monitor.on_movie_detected    = self._on_movie_detected
         self._monitor.on_connection_change = self._on_connection_change
 
         self._build_ui()
@@ -453,12 +606,12 @@ class App(ctk.CTk):
         with open(CONFIG_PATH, "w") as f:
             json.dump(self._config, f, indent=2)
 
-    # ── UI ────────────────────────────────────────────────────────────────────
+    # ── UI Construction ───────────────────────────────────────────────────────
 
     def _build_ui(self):
-        self.grid_rowconfigure(0, weight=0)   # header
-        self.grid_rowconfigure(1, weight=0)   # notification (hidden initially)
-        self.grid_rowconfigure(2, weight=1)   # content
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         # Header
@@ -473,8 +626,7 @@ class App(ctk.CTk):
                      font=ctk.CTkFont(size=22, weight="bold"),
                      text_color=ACCENT).pack(side="left")
         ctk.CTkLabel(logo_f, text="  ·  TV & Movie Tracker",
-                     font=ctk.CTkFont(size=12),
-                     text_color="gray45").pack(side="left")
+                     font=ctk.CTkFont(size=12), text_color="gray45").pack(side="left")
 
         right_f = ctk.CTkFrame(header, fg_color="transparent")
         right_f.grid(row=0, column=2, padx=22, pady=14, sticky="e")
@@ -494,19 +646,18 @@ class App(ctk.CTk):
                       font=ctk.CTkFont(size=12),
                       command=lambda: self._open_edit(None)).pack(side="left")
 
-        # Notification bar (hidden until needed)
+        # Notification bar
         self._notif_bar = ctk.CTkFrame(self, fg_color="#0c2b18", corner_radius=0, height=38)
         self._notif_lbl = ctk.CTkLabel(self._notif_bar, text="",
                                         font=ctk.CTkFont(size=12), text_color=GREEN)
         self._notif_lbl.pack(fill="x", padx=24, pady=9)
 
-        # Content area
+        # Content
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.grid(row=2, column=0, sticky="nsew", padx=22, pady=18)
         content.rowconfigure(1, weight=1)
         content.columnconfigure(0, weight=1)
 
-        # Search row
         search_row = ctk.CTkFrame(content, fg_color="transparent")
         search_row.grid(row=0, column=0, sticky="ew", pady=(0, 14))
 
@@ -516,12 +667,10 @@ class App(ctk.CTk):
         self._search_var.trace_add("write", lambda *_: self._refresh())
         ctk.CTkEntry(search_row, textvariable=self._search_var,
                      placeholder_text="Filter…", width=240, height=34).pack(side="left")
-
         self._count_lbl = ctk.CTkLabel(search_row, text="",
                                         font=ctk.CTkFont(size=12), text_color="gray50")
         self._count_lbl.pack(side="right")
 
-        # Scrollable card grid (2 columns)
         self._scroll = ctk.CTkScrollableFrame(content, fg_color="transparent")
         self._scroll.grid(row=1, column=0, sticky="nsew")
         self._scroll.columnconfigure((0, 1), weight=1)
@@ -540,7 +689,7 @@ class App(ctk.CTk):
         if not entries:
             msg = ("No results match your search."
                    if q else
-                   "Nothing tracked yet.\nAdd an entry manually or play an episode in VLC!")
+                   "Nothing tracked yet.\nAdd an entry or play something in VLC!")
             ctk.CTkLabel(self._scroll, text=msg,
                          font=ctk.CTkFont(size=14), text_color="gray45",
                          justify="center").grid(row=0, column=0, columnspan=2, pady=80)
@@ -563,6 +712,12 @@ class App(ctk.CTk):
         if updated:
             self.after(0, lambda: self._notify(
                 f"▶  Now watching:  {show}  —  S{season:02d}E{episode:02d}"))
+        self.after(0, self._refresh)
+
+    def _on_movie_detected(self, title: str, position: int):
+        is_new = database.upsert_movie(title, position)
+        if is_new:
+            self.after(0, lambda: self._notify(f"🎬  Detected movie:  {title}"))
         self.after(0, self._refresh)
 
     def _on_connection_change(self, connected: bool):
@@ -603,12 +758,39 @@ class App(ctk.CTk):
         EditDialog(self, entry, self._save_entry)
 
     def _save_entry(self, name: str, entry_type: str, season: int,
-                    episode: int, watch_time: int, existing: Optional[dict]):
+                    episode: int, watch_time: int,
+                    rating: int, description: str,
+                    pending_poster: str, existing: Optional[dict]):
+        """
+        Persist the entry.  If a new poster image was chosen, copy it into
+        the posters/ folder so it survives the original file moving/deleting.
+        """
+        # Determine final poster path
+        poster_path = existing.get("poster_path", "") or "" if existing else ""
+
+        if pending_poster and os.path.isfile(pending_poster):
+            if existing:
+                # Copy now (we have the DB id already)
+                poster_path = _copy_poster(pending_poster, existing["id"])
+            else:
+                # For new entries we'll copy after insertion using a temp id
+                poster_path = pending_poster  # will be fixed up below
+
         if existing:
             database.update_entry(existing["id"], name, entry_type,
-                                   season, episode, watch_time)
+                                   season, episode, watch_time,
+                                   rating, description, poster_path)
         else:
-            database.add_entry(name, entry_type, season, episode, watch_time)
+            database.add_entry(name, entry_type, season, episode, watch_time,
+                               rating, description, poster_path="")
+            # Get the newly created row to copy the poster with the real id
+            row = database.get_show_by_name(name)
+            if row and pending_poster and os.path.isfile(pending_poster):
+                real_poster = _copy_poster(pending_poster, row["id"])
+                database.update_entry(row["id"], name, entry_type,
+                                       season, episode, watch_time,
+                                       rating, description, real_poster)
+
         self._refresh()
 
     def _delete_entry(self, entry: dict):
@@ -616,6 +798,13 @@ class App(ctk.CTk):
                                 f"Remove \"{entry['name']}\" from tracking?",
                                 parent=self):
             database.delete_show(entry["id"])
+            # Also delete poster file if stored in our folder
+            pp = entry.get("poster_path", "") or ""
+            if pp and pp.startswith(POSTER_DIR) and os.path.isfile(pp):
+                try:
+                    os.remove(pp)
+                except OSError:
+                    pass
             self._refresh()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────

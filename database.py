@@ -22,6 +22,9 @@ def init_db():
             current_season INTEGER DEFAULT 1,
             current_episode INTEGER DEFAULT 1,
             watch_time_seconds INTEGER DEFAULT 0,
+            rating INTEGER DEFAULT 0,
+            description TEXT DEFAULT '',
+            poster_path TEXT DEFAULT '',
             last_watched TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
@@ -37,11 +40,14 @@ def init_db():
             FOREIGN KEY (show_id) REFERENCES shows(id)
         )
     """)
-    # Migrate existing databases safely
+    # Safe migration for existing databases
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(shows)").fetchall()}
     for col, ddl in [
-        ("type", "ALTER TABLE shows ADD COLUMN type TEXT NOT NULL DEFAULT 'show'"),
+        ("type",               "ALTER TABLE shows ADD COLUMN type TEXT NOT NULL DEFAULT 'show'"),
         ("watch_time_seconds", "ALTER TABLE shows ADD COLUMN watch_time_seconds INTEGER DEFAULT 0"),
+        ("rating",             "ALTER TABLE shows ADD COLUMN rating INTEGER DEFAULT 0"),
+        ("description",        "ALTER TABLE shows ADD COLUMN description TEXT DEFAULT ''"),
+        ("poster_path",        "ALTER TABLE shows ADD COLUMN poster_path TEXT DEFAULT ''"),
     ]:
         if col not in existing_cols:
             conn.execute(ddl)
@@ -68,7 +74,7 @@ def get_show_by_name(name: str) -> Optional[Dict]:
 
 
 def upsert_show(name: str, season: int, episode: int) -> bool:
-    """Called by VLC monitor for auto-detected TV episodes. Returns True if episode changed."""
+    """Auto-called by VLC monitor for TV episodes. Returns True if episode changed."""
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     existing = conn.execute(
@@ -98,35 +104,67 @@ def upsert_show(name: str, season: int, episode: int) -> bool:
     return updated
 
 
+def upsert_movie(title: str, position_seconds: int) -> bool:
+    """Auto-called by VLC monitor for movies. Returns True if newly added."""
+    conn = get_connection()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    existing = conn.execute(
+        "SELECT * FROM shows WHERE LOWER(name) = LOWER(?)", (title,)
+    ).fetchone()
+    is_new = False
+    if existing:
+        if existing["type"] == "movie":
+            conn.execute(
+                "UPDATE shows SET watch_time_seconds=?, last_watched=? WHERE id=?",
+                (position_seconds, now, existing["id"]),
+            )
+        # If tracked as a TV show, don't override it
+    else:
+        conn.execute(
+            "INSERT INTO shows (name, type, watch_time_seconds, last_watched)"
+            " VALUES (?, 'movie', ?, ?)",
+            (title, position_seconds, now),
+        )
+        is_new = True
+    conn.commit()
+    conn.close()
+    return is_new
+
+
 def add_entry(name: str, entry_type: str, season: int = 1, episode: int = 1,
-              watch_time_seconds: int = 0):
+              watch_time_seconds: int = 0, rating: int = 0,
+              description: str = "", poster_path: str = ""):
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT OR IGNORE INTO shows"
-        " (name, type, current_season, current_episode, watch_time_seconds, last_watched)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (name, entry_type, season, episode, watch_time_seconds, now),
+        " (name, type, current_season, current_episode, watch_time_seconds,"
+        "  rating, description, poster_path, last_watched)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, entry_type, season, episode, watch_time_seconds,
+         rating, description, poster_path, now),
     )
     conn.commit()
     conn.close()
 
 
 def update_entry(show_id: int, name: str, entry_type: str, season: int,
-                 episode: int, watch_time_seconds: int):
+                 episode: int, watch_time_seconds: int,
+                 rating: int = 0, description: str = "", poster_path: str = ""):
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "UPDATE shows SET name=?, type=?, current_season=?, current_episode=?,"
-        " watch_time_seconds=?, last_watched=? WHERE id=?",
-        (name, entry_type, season, episode, watch_time_seconds, now, show_id),
+        " watch_time_seconds=?, rating=?, description=?, poster_path=?,"
+        " last_watched=? WHERE id=?",
+        (name, entry_type, season, episode, watch_time_seconds,
+         rating, description, poster_path, now, show_id),
     )
     conn.commit()
     conn.close()
 
 
 def update_show_progress(show_id: int, season: int, episode: int):
-    """Quick update for +/- buttons on a show card."""
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
@@ -138,7 +176,6 @@ def update_show_progress(show_id: int, season: int, episode: int):
 
 
 def update_movie_progress(show_id: int, watch_time_seconds: int):
-    """Quick update for +/- buttons on a movie card."""
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(

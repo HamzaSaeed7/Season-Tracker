@@ -1,3 +1,12 @@
+import sys
+
+# ── Hide the Windows console window immediately ───────────────────────────────
+if sys.platform == "win32":
+    import ctypes
+    _hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+    if _hwnd:
+        ctypes.windll.user32.ShowWindow(_hwnd, 0)  # SW_HIDE
+
 from ui import App
 
 
