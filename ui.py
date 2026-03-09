@@ -3,11 +3,13 @@ import hashlib
 import json
 import os
 import shutil
-from datetime import datetime
+import xml.etree.ElementTree as ET
 from tkinter import messagebox, filedialog
 from typing import Optional
 
-from PIL import Image, ImageOps
+import aggdraw
+from PIL import Image, ImageDraw, ImageOps
+from svg.path import parse_path, Move, Line, CubicBezier, QuadraticBezier, Arc, Close
 import customtkinter as ctk
 
 import database
@@ -31,7 +33,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 
 os.makedirs(POSTER_DIR, exist_ok=True)
 
-POSTER_W, POSTER_H = 80, 112   # display size on card
+POSTER_W, POSTER_H = 100, 145  # display size on card
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -50,15 +52,113 @@ def _fmt_time(seconds: int) -> str:
 
 
 def _load_poster_image(poster_path: str) -> Optional[ctk.CTkImage]:
-    """Load a user-supplied poster and fit it to POSTER_W × POSTER_H."""
+    """Load a poster, fit it, and apply rounded corners matching the card radius."""
     if not poster_path or not os.path.isfile(poster_path):
         return None
     try:
-        img = Image.open(poster_path).convert("RGB")
+        img = Image.open(poster_path).convert("RGBA")
         img = ImageOps.fit(img, (POSTER_W, POSTER_H), Image.LANCZOS)
+
+        # Rounded-corner mask (radius must match _Poster corner_radius)
+        mask = Image.new("L", (POSTER_W, POSTER_H), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, POSTER_W - 1, POSTER_H - 1], radius=14, fill=255
+        )
+        img.putalpha(mask)
+
         return ctk.CTkImage(light_image=img, dark_image=img, size=(POSTER_W, POSTER_H))
     except Exception:
         return None
+
+
+# ── Icon helpers ──────────────────────────────────────────────────────────────
+
+ICONS_DIR   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+_SVG_FILES  = {"edit": "edit-2.svg", "delete": "trash.svg"}
+_ICON_CACHE: dict = {}
+
+
+def _get_icon(kind: str, size: int = 22) -> ctk.CTkImage:
+    key = (kind, size)
+    if key not in _ICON_CACHE:
+        _ICON_CACHE[key] = _render_svg_icon(kind, size)
+    return _ICON_CACHE[key]
+
+
+def _svg_path_to_polylines(d: str, scale: float):
+    """Parse an SVG path string and return a list of [(x,y)…] polylines."""
+    subpaths, current = [], []
+    for seg in parse_path(d):
+        if isinstance(seg, Move):
+            if current:
+                subpaths.append(current)
+            p = seg.start
+            current = [(p.real * scale, p.imag * scale)]
+        elif isinstance(seg, (Line, Close)):
+            p = seg.end
+            current.append((p.real * scale, p.imag * scale))
+        else:  # Arc, CubicBezier, QuadraticBezier — sample as polyline
+            steps = max(12, int(abs(seg.end - seg.start) * scale * 3))
+            for i in range(1, steps + 1):
+                p = seg.point(i / steps)
+                current.append((p.real * scale, p.imag * scale))
+    if current:
+        subpaths.append(current)
+    return subpaths
+
+
+def _render_svg_icon(kind: str, display_size: int = 22) -> ctk.CTkImage:
+    """Render an SVG icon from the icons/ folder at 2× then LANCZOS-downsample."""
+    S     = display_size * 2
+    scale = S / 24.0
+    path  = os.path.join(ICONS_DIR, _SVG_FILES[kind])
+
+    root  = ET.parse(path).getroot()
+    # Inherit stroke colour from the root <svg> element
+    default_stroke = root.get("stroke", "#ffffff")
+    sw = float(root.get("stroke-width", "2")) * scale
+
+    img  = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    draw = aggdraw.Draw(img)
+
+    def _hex_to_rgb(h):
+        h = h.lstrip("#")
+        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+    def _draw_elem(elem):
+        stroke = elem.get("stroke", default_stroke)
+        if stroke == "none":
+            return
+        pen = aggdraw.Pen(_hex_to_rgb(stroke), sw)
+        tag = elem.tag.split("}")[-1]
+
+        if tag == "path":
+            for pts in _svg_path_to_polylines(elem.get("d", ""), scale):
+                if len(pts) >= 2:
+                    draw.line([c for pt in pts for c in pt], pen)
+
+        elif tag == "polyline":
+            raw = list(map(float, elem.get("points", "").split()))
+            pts = [(raw[i] * scale, raw[i+1] * scale) for i in range(0, len(raw)-1, 2)]
+            if len(pts) >= 2:
+                draw.line([c for pt in pts for c in pt], pen)
+
+        elif tag == "line":
+            x1 = float(elem.get("x1", 0)) * scale
+            y1 = float(elem.get("y1", 0)) * scale
+            x2 = float(elem.get("x2", 0)) * scale
+            y2 = float(elem.get("y2", 0)) * scale
+            draw.line([x1, y1, x2, y2], pen)
+
+        for child in elem:
+            _draw_elem(child)
+
+    for child in root:
+        _draw_elem(child)
+
+    draw.flush()
+    img = img.resize((display_size, display_size), Image.LANCZOS)
+    return ctk.CTkImage(light_image=img, dark_image=img, size=(display_size, display_size))
 
 
 def _copy_poster(src_path: str, show_id: int) -> str:
@@ -76,14 +176,14 @@ class _Poster(ctk.CTkFrame):
 
     def __init__(self, parent, name: str, poster_path: str = "", **kw):
         super().__init__(parent, width=POSTER_W, height=POSTER_H,
-                         corner_radius=10, **kw)
+                         corner_radius=14, **kw)
         self.pack_propagate(False)
         self.grid_propagate(False)
 
         img = _load_poster_image(poster_path)
         if img:
-            self.configure(fg_color="black")
-            ctk.CTkLabel(self, text="", image=img).pack(expand=True)
+            self.configure(fg_color=CARD_BG)
+            ctk.CTkLabel(self, text="", image=img, fg_color=CARD_BG).pack(expand=True)
         else:
             self.configure(fg_color=_poster_color(name))
             initials = "".join(w[0].upper() for w in name.split() if w)[:2]
@@ -164,12 +264,19 @@ class _RatingSlider(ctk.CTkFrame):
 
 # ── Show / Movie Card ─────────────────────────────────────────────────────────
 
+_CARD_H = POSTER_H + 28  # poster + top/bottom padding
+
+
 class ShowCard(ctk.CTkFrame):
-    def __init__(self, parent, show: dict, on_edit, on_delete, **kw):
-        super().__init__(parent, corner_radius=14, fg_color=CARD_BG, **kw)
-        self._show     = show.copy()
+    def __init__(self, parent, show: dict, on_edit, on_delete, on_copy=None, **kw):
+        super().__init__(parent, corner_radius=14, fg_color=CARD_BG,
+                         height=_CARD_H, **kw)
+        self.pack_propagate(False)
+        self.grid_propagate(False)
+        self._show      = show.copy()
         self._on_edit   = on_edit
         self._on_delete = on_delete
+        self._on_copy   = on_copy
         self._build()
 
     def _build(self):
@@ -188,26 +295,32 @@ class ShowCard(ctk.CTkFrame):
         right = ctk.CTkFrame(outer, fg_color="transparent")
         right.pack(side="left", fill="both", expand=True)
 
+        # ── Pack btn_row at bottom FIRST so it always anchors there ──────────
+        btn_row = ctk.CTkFrame(right, fg_color="transparent")
+        btn_row.pack(side="bottom", fill="x")
+        ctk.CTkButton(btn_row, text="", image=_get_icon("delete", 20),
+                      width=30, height=30, corner_radius=6,
+                      fg_color="gray20", hover_color="gray30",
+                      command=lambda: self._on_delete(self._show)).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(btn_row, text="", image=_get_icon("edit", 20),
+                      width=30, height=30, corner_radius=6,
+                      fg_color="gray20", hover_color="gray30",
+                      command=lambda: self._on_edit(self._show)).pack(side="right")
+
+        # ── Rest of content fills from top ───────────────────────────────────
+
         # Name + type badge
         hdr = ctk.CTkFrame(right, fg_color="transparent")
         hdr.pack(fill="x")
-        ctk.CTkLabel(hdr, text=show["name"],
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     anchor="w").pack(side="left")
+        name_lbl = ctk.CTkLabel(hdr, text=show["name"],
+                                font=ctk.CTkFont(size=16, weight="bold"),
+                                anchor="w")
+        name_lbl.pack(side="left")
+        name_lbl.bind("<Double-Button-1>",
+                      lambda e, n=show["name"]: self._copy_name(n))
         ctk.CTkLabel(hdr, text="📺 TV Show" if is_tv else "🎬 Movie",
                      font=ctk.CTkFont(size=10),
                      text_color="gray50").pack(side="right")
-
-        # Big progress label
-        if is_tv:
-            prog = f"S{show['current_season']:02d}  E{show['current_episode']:02d}"
-        else:
-            prog = _fmt_time(show.get("watch_time_seconds", 0))
-
-        self._prog_lbl = ctk.CTkLabel(right, text=prog,
-                                       font=ctk.CTkFont(size=26, weight="bold"),
-                                       text_color=ACCENT, anchor="w")
-        self._prog_lbl.pack(fill="x", pady=(4, 6))
 
         # +/− counters
         if is_tv:
@@ -250,28 +363,13 @@ class ShowCard(ctk.CTkFrame):
                          text_color="gray50",
                          anchor="w").pack(fill="x")
 
-        # Last watched
-        lw = show.get("last_watched") or ""
-        if lw:
-            try:
-                lw = datetime.strptime(lw, "%Y-%m-%d %H:%M:%S").strftime("%b %d, %Y")
-            except ValueError:
-                pass
-        ctk.CTkLabel(right,
-                     text=f"Last watched  {lw}" if lw else "Not watched yet",
-                     font=ctk.CTkFont(size=10), text_color="gray50",
-                     anchor="w").pack(fill="x", pady=(4, 6))
+    # ── Copy name ─────────────────────────────────────────────────────────────
 
-        # Buttons
-        btn_row = ctk.CTkFrame(right, fg_color="transparent")
-        btn_row.pack(anchor="w")
-        ctk.CTkButton(btn_row, text="Edit", width=60, height=28,
-                      font=ctk.CTkFont(size=12),
-                      command=lambda: self._on_edit(self._show)).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(btn_row, text="Remove", width=76, height=28,
-                      font=ctk.CTkFont(size=12),
-                      fg_color=DANGER, hover_color=DANGER_HVR,
-                      command=lambda: self._on_delete(self._show)).pack(side="left")
+    def _copy_name(self, name: str):
+        self.clipboard_clear()
+        self.clipboard_append(name)
+        if self._on_copy:
+            self._on_copy(name)
 
     # ── Adjust ────────────────────────────────────────────────────────────────
 
@@ -286,9 +384,6 @@ class ShowCard(ctk.CTkFrame):
                 new = max(1, show["current_episode"] + delta)
                 show["current_episode"] = new
                 self._episode_ctr.set_value(new)
-            self._prog_lbl.configure(
-                text=f"S{show['current_season']:02d}  E{show['current_episode']:02d}"
-            )
             database.update_show_progress(show["id"],
                                            show["current_season"],
                                            show["current_episode"])
@@ -306,7 +401,6 @@ class ShowCard(ctk.CTkFrame):
             self._hours_ctr.set_value(h)
             self._mins_ctr.set_value(m)
             self._secs_ctr.set_value(s)
-            self._prog_lbl.configure(text=_fmt_time(new_t))
             database.update_movie_progress(show["id"], new_t)
 
     def refresh(self, show: dict):
@@ -324,8 +418,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self.title("VLC Settings")
         self.geometry("400x330")
         self.resizable(False, False)
-        self.grab_set()
-        self.lift()
+        self.after(150, lambda: (self.lift(), self.focus_force(), self.grab_set()))
         self._on_save = on_save
 
         ctk.CTkLabel(self, text="VLC HTTP Interface",
@@ -384,8 +477,9 @@ class EditDialog(ctk.CTkToplevel):
         self.title("Add Entry" if is_new else f"Edit  —  {entry['name']}")
         self.geometry("420x560")
         self.resizable(False, False)
-        self.grab_set()
-        self.lift()
+        # Defer grab_set/lift — calling grab_set before the window is drawn
+        # causes CTkToplevel to swallow all events and become unresponsive.
+        self.after(150, lambda: (self.lift(), self.focus_force(), self.grab_set()))
 
         self._entry   = entry
         self._on_save = on_save
@@ -672,7 +766,21 @@ class App(ctk.CTk):
         self._search_var = ctk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._refresh())
         ctk.CTkEntry(search_row, textvariable=self._search_var,
-                     placeholder_text="Filter…", width=240, height=34).pack(side="left")
+                     placeholder_text="Filter…", width=220, height=34).pack(side="left")
+
+        # Rating filter
+        ctk.CTkLabel(search_row, text="Rating:",
+                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(18, 8))
+        self._rating_filter_var = ctk.StringVar(value="All")
+        self._rating_filter_var.trace_add("write", lambda *_: self._refresh())
+        ctk.CTkOptionMenu(
+            search_row,
+            variable=self._rating_filter_var,
+            values=["All", "★ ≥ 1.0", "★ ≥ 2.0", "★ ≥ 3.0", "★ ≥ 4.0", "★ ≥ 4.5"],
+            width=110, height=34,
+            fg_color="gray22", button_color="gray30", button_hover_color="gray40",
+        ).pack(side="left")
+
         self._count_lbl = ctk.CTkLabel(search_row, text="",
                                         font=ctk.CTkFont(size=12), text_color="gray50")
         self._count_lbl.pack(side="right")
@@ -688,6 +796,12 @@ class App(ctk.CTk):
         q = self._search_var.get().lower().strip() if hasattr(self, "_search_var") else ""
         if q:
             entries = [e for e in entries if q in e["name"].lower()]
+
+        # Rating filter
+        rf = self._rating_filter_var.get() if hasattr(self, "_rating_filter_var") else "All"
+        if rf != "All":
+            threshold = float(rf.split("≥")[-1].strip())
+            entries = [e for e in entries if (e.get("rating") or 0) >= threshold]
 
         for w in self._scroll.winfo_children():
             w.destroy()
@@ -705,8 +819,9 @@ class App(ctk.CTk):
         for i, entry in enumerate(entries):
             card = ShowCard(self._scroll, entry,
                             on_edit=self._open_edit,
-                            on_delete=self._delete_entry)
-            card.grid(row=i // 2, column=i % 2, padx=9, pady=9, sticky="nsew")
+                            on_delete=self._delete_entry,
+                            on_copy=lambda n: self._notify(f"Copied:  {n}"))
+            card.grid(row=i // 2, column=i % 2, padx=9, pady=9, sticky="ew")
 
         n = len(entries)
         self._count_lbl.configure(text=f"{n} entr{'ies' if n != 1 else 'y'}")
