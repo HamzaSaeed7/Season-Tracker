@@ -123,35 +123,43 @@ class _Counter(ctk.CTkFrame):
         return self._val
 
 
-class _StarPicker(ctk.CTkFrame):
-    """Clickable 5-star rating widget. Click same star again to clear."""
+class _RatingSlider(ctk.CTkFrame):
+    """Slider for a 0.0 – 5.0 rating in 0.1 steps.  0.0 means 'not rated'."""
 
-    def __init__(self, parent, initial: int = 0, **kw):
+    def __init__(self, parent, initial: float = 0.0, **kw):
         super().__init__(parent, fg_color="transparent", **kw)
-        self._rating = initial
-        self._btns: list = []
-        for i in range(1, 6):
-            b = ctk.CTkButton(
-                self, text="★", width=34, height=34,
-                fg_color="transparent", hover_color="gray18",
-                font=ctk.CTkFont(size=20),
-                text_color=GOLD if i <= initial else GOLD_DIM,
-                command=lambda v=i: self._click(v),
-            )
-            b.pack(side="left", padx=1)
-            self._btns.append(b)
+        self._var = ctk.DoubleVar(value=float(initial))
 
-    def _click(self, v: int):
-        self._rating = 0 if self._rating == v else v
-        self._redraw()
+        ctk.CTkLabel(self, text="0", font=ctk.CTkFont(size=11),
+                     text_color="gray50").pack(side="left", padx=(0, 4))
 
-    def _redraw(self):
-        for i, b in enumerate(self._btns):
-            b.configure(text_color=GOLD if i < self._rating else GOLD_DIM)
+        self._slider = ctk.CTkSlider(
+            self, from_=0, to=5,
+            number_of_steps=50,          # 0.1 per step
+            variable=self._var,
+            width=180,
+            command=self._on_change,
+        )
+        self._slider.pack(side="left")
+
+        ctk.CTkLabel(self, text="5", font=ctk.CTkFont(size=11),
+                     text_color="gray50").pack(side="left", padx=(4, 10))
+
+        self._lbl = ctk.CTkLabel(self, text=self._fmt(initial),
+                                  font=ctk.CTkFont(size=14, weight="bold"),
+                                  text_color=GOLD, width=42, anchor="w")
+        self._lbl.pack(side="left")
+
+    def _on_change(self, v):
+        self._lbl.configure(text=self._fmt(round(v, 1)))
+
+    @staticmethod
+    def _fmt(v: float) -> str:
+        return "—" if v == 0 else f"{v:.1f} ★"
 
     @property
-    def rating(self) -> int:
-        return self._rating
+    def rating(self) -> float:
+        return round(self._var.get(), 1)
 
 
 # ── Show / Movie Card ─────────────────────────────────────────────────────────
@@ -224,12 +232,12 @@ class ShowCard(ctk.CTkFrame):
                                         lambda d: self._adjust("seconds", d))
             self._secs_ctr.pack(anchor="w", pady=2)
 
-        # Star rating (only if rated)
+        # Rating (only if set)
         rating = show.get("rating", 0) or 0
         if rating:
             ctk.CTkLabel(right,
-                         text="★" * rating + "☆" * (5 - rating),
-                         font=ctk.CTkFont(size=13),
+                         text=f"★  {float(rating):.1f} / 5.0",
+                         font=ctk.CTkFont(size=12),
                          text_color=GOLD,
                          anchor="w").pack(fill="x", pady=(4, 0))
 
@@ -475,10 +483,8 @@ class EditDialog(ctk.CTkToplevel):
         rating_row.pack(padx=36, fill="x", pady=(10, 0))
         ctk.CTkLabel(rating_row, text="Rating:", anchor="w",
                      width=60).pack(side="left")
-        self._star_picker = _StarPicker(rating_row, initial=existing_rating)
-        self._star_picker.pack(side="left", padx=(10, 0))
-        ctk.CTkLabel(rating_row, text="/ 5",
-                     font=ctk.CTkFont(size=11), text_color="gray50").pack(side="left", padx=(6, 0))
+        self._rating_slider = _RatingSlider(rating_row, initial=existing_rating)
+        self._rating_slider.pack(side="left", padx=(10, 0))
 
         # ── Notes ─────────────────────────────────────────────────────────────
         ctk.CTkLabel(self, text="Notes  (optional):", anchor="w",
@@ -538,7 +544,7 @@ class EditDialog(ctk.CTkToplevel):
             return
 
         is_tv = self._type_seg.get() == "TV Show"
-        rating  = self._star_picker.rating
+        rating  = self._rating_slider.rating
         desc    = self._desc_box.get("1.0", "end-1c").strip()
 
         if is_tv:
@@ -759,7 +765,7 @@ class App(ctk.CTk):
 
     def _save_entry(self, name: str, entry_type: str, season: int,
                     episode: int, watch_time: int,
-                    rating: int, description: str,
+                    rating: float, description: str,
                     pending_poster: str, existing: Optional[dict]):
         """
         Persist the entry.  If a new poster image was chosen, copy it into
