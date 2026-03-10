@@ -37,21 +37,27 @@ from vlc_monitor import VLCMonitor
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-ACCENT      = "#4da6ff"
-GREEN       = "#4dff88"
-CARD_BG     = "#1a1b2e"
-HEADER_BG   = "#0f0f1a"
-DANGER      = "#c0392b"
-DANGER_HVR  = "#a93226"
-GOLD        = "#FFD700"
-GOLD_DIM    = "#444433"
+BG          = "#0a0b0f"
+SURFACE     = "#111318"
+SURFACE2    = "#181b22"
+BORDER_C    = "#1c1f28"
+ACCENT      = "#5b8dee"
+GREEN       = "#5be8b0"
+CARD_BG     = "#111318"
+HEADER_BG   = "#0d0e12"
+DANGER      = "#e85b5b"
+DANGER_HVR  = "#d44444"
+GOLD        = "#f0b429"
+GOLD_DIM    = "#3a3010"
+MUTED       = "#5a5f72"
+TEXT_COLOR  = "#e8eaf0"
 
 POSTER_DIR  = os.path.join(_data_dir(), "posters")
 CONFIG_PATH = os.path.join(_data_dir(), "config.json")
 
 os.makedirs(POSTER_DIR, exist_ok=True)
 
-POSTER_W, POSTER_H = 100, 145  # display size on card
+POSTER_W, POSTER_H = 88, 120   # display size on card
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -190,46 +196,51 @@ def _copy_poster(src_path: str, show_id: int) -> str:
 # ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _Poster(ctk.CTkFrame):
-    """Poster area: shows a user image if available, else a coloured initial tile."""
+    """Poster strip: fixed width, fills card height vertically."""
 
     def __init__(self, parent, name: str, poster_path: str = "", **kw):
-        super().__init__(parent, width=POSTER_W, height=POSTER_H,
-                         corner_radius=14, **kw)
+        super().__init__(parent, width=POSTER_W, height=POSTER_H, corner_radius=12, **kw)
         self.pack_propagate(False)
-        self.grid_propagate(False)
 
         img = _load_poster_image(poster_path)
         if img:
             self.configure(fg_color=CARD_BG)
-            ctk.CTkLabel(self, text="", image=img, fg_color=CARD_BG).pack(expand=True)
+            ctk.CTkLabel(self, text="", image=img,
+                         fg_color="transparent", anchor="n").pack(anchor="n")
         else:
             self.configure(fg_color=_poster_color(name))
             initials = "".join(w[0].upper() for w in name.split() if w)[:2]
             ctk.CTkLabel(self, text=initials,
-                         font=ctk.CTkFont(size=26, weight="bold"),
+                         font=ctk.CTkFont(size=30, weight="bold"),
                          text_color="white").pack(expand=True)
 
 
 class _Counter(ctk.CTkFrame):
-    """Inline  [−]  value  [+]  row with a label."""
+    """Inline  [−]  value  [+]  row with an uppercase label."""
 
     def __init__(self, parent, label: str, value: int, on_change, **kw):
         super().__init__(parent, fg_color="transparent", **kw)
-        ctk.CTkLabel(self, text=label, width=60, anchor="w",
-                     font=ctk.CTkFont(size=11),
-                     text_color="gray55").pack(side="left")
-        ctk.CTkButton(self, text="−", width=28, height=26,
-                      fg_color="gray20", hover_color="gray30",
-                      font=ctk.CTkFont(size=15, weight="bold"),
-                      command=lambda: on_change(-1)).pack(side="left", padx=(0, 2))
-        self._lbl = ctk.CTkLabel(self, text=str(value), width=36,
-                                  font=ctk.CTkFont(size=13, weight="bold"),
-                                  anchor="center")
-        self._lbl.pack(side="left", padx=2)
-        ctk.CTkButton(self, text="+", width=28, height=26,
-                      fg_color="gray20", hover_color="gray30",
-                      font=ctk.CTkFont(size=15, weight="bold"),
-                      command=lambda: on_change(+1)).pack(side="left", padx=(2, 0))
+        ctk.CTkLabel(self, text=label.upper(),
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=MUTED,
+                     width=52, anchor="w").pack(side="left", padx=(0, 6))
+        ctk.CTkButton(self, text="−", width=26, height=26,
+                      fg_color=SURFACE2, hover_color=BORDER_C,
+                      border_width=1, border_color=BORDER_C,
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      corner_radius=6,
+                      command=lambda: on_change(-1)).pack(side="left")
+        self._lbl = ctk.CTkLabel(self, text=str(value),
+                                  font=ctk.CTkFont(size=14, weight="bold"),
+                                  text_color=TEXT_COLOR,
+                                  width=32, anchor="center")
+        self._lbl.pack(side="left")
+        ctk.CTkButton(self, text="+", width=26, height=26,
+                      fg_color=SURFACE2, hover_color=BORDER_C,
+                      border_width=1, border_color=BORDER_C,
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      corner_radius=6,
+                      command=lambda: on_change(+1)).pack(side="left")
         self._val = value
 
     def set_value(self, v: int):
@@ -282,15 +293,10 @@ class _RatingSlider(ctk.CTkFrame):
 
 # ── Show / Movie Card ─────────────────────────────────────────────────────────
 
-_CARD_H = POSTER_H + 28  # poster + top/bottom padding
-
-
 class ShowCard(ctk.CTkFrame):
     def __init__(self, parent, show: dict, on_edit, on_delete, on_copy=None, **kw):
-        super().__init__(parent, corner_radius=14, fg_color=CARD_BG,
-                         height=_CARD_H, **kw)
-        self.pack_propagate(False)
-        self.grid_propagate(False)
+        super().__init__(parent, corner_radius=12, fg_color=CARD_BG,
+                         border_width=1, border_color=BORDER_C, **kw)
         self._show      = show.copy()
         self._on_edit   = on_edit
         self._on_delete = on_delete
@@ -298,88 +304,108 @@ class ShowCard(ctk.CTkFrame):
         self._build()
 
     def _build(self):
-        show   = self._show
-        is_tv  = show.get("type", "show") == "show"
+        show  = self._show
+        is_tv = show.get("type", "show") == "show"
 
-        outer = ctk.CTkFrame(self, fg_color="transparent")
-        outer.pack(fill="both", expand=True, padx=14, pady=14)
-
-        # Left: poster
-        _Poster(outer, show["name"],
+        # ── Left: poster strip ────────────────────────────────────────────
+        _Poster(self, show["name"],
                 poster_path=show.get("poster_path", "") or "").pack(
-            side="left", anchor="n", padx=(0, 14))
+            side="left", fill="y")
 
-        # Right: content
-        right = ctk.CTkFrame(outer, fg_color="transparent")
-        right.pack(side="left", fill="both", expand=True)
+        # ── Right: body ───────────────────────────────────────────────────
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(side="left", fill="both", expand=True, padx=14, pady=(10, 8))
 
-        # ── Pack btn_row at bottom FIRST so it always anchors there ──────────
-        btn_row = ctk.CTkFrame(right, fg_color="transparent")
-        btn_row.pack(side="bottom", fill="x")
-        ctk.CTkButton(btn_row, text="", image=_get_icon("delete", 20),
-                      width=30, height=30, corner_radius=6,
-                      fg_color="gray20", hover_color="gray30",
-                      command=lambda: self._on_delete(self._show)).pack(side="right", padx=(4, 0))
-        ctk.CTkButton(btn_row, text="", image=_get_icon("edit", 20),
-                      width=30, height=30, corner_radius=6,
-                      fg_color="gray20", hover_color="gray30",
-                      command=lambda: self._on_edit(self._show)).pack(side="right")
+        # 1 ─ Header: title + type badge
+        hdr = ctk.CTkFrame(body, fg_color="transparent")
+        hdr.pack(fill="x", pady=(0, 8))
 
-        # ── Rest of content fills from top ───────────────────────────────────
-
-        # Name + type badge
-        hdr = ctk.CTkFrame(right, fg_color="transparent")
-        hdr.pack(fill="x")
-        name_lbl = ctk.CTkLabel(hdr, text=show["name"],
-                                font=ctk.CTkFont(size=16, weight="bold"),
-                                anchor="w")
+        name_lbl = ctk.CTkLabel(
+            hdr, text=show["name"],
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color=TEXT_COLOR, anchor="w")
         name_lbl.pack(side="left")
         name_lbl.bind("<Double-Button-1>",
                       lambda e, n=show["name"]: self._copy_name(n))
-        ctk.CTkLabel(hdr, text="📺 TV Show" if is_tv else "🎬 Movie",
-                     font=ctk.CTkFont(size=10),
-                     text_color="gray50").pack(side="right")
 
-        # +/− counters
+        badge_f = ctk.CTkFrame(hdr, fg_color=SURFACE2, corner_radius=4)
+        badge_f.pack(side="right")
+        ctk.CTkLabel(badge_f,
+                     text="TV SHOW" if is_tv else "MOVIE",
+                     font=ctk.CTkFont(size=10, weight="bold"),
+                     text_color=MUTED).pack(padx=6, pady=2)
+
+        # 2 ─ Progress counters (horizontal)
+        prog = ctk.CTkFrame(body, fg_color="transparent")
+        prog.pack(fill="x", pady=(0, 6))
+
         if is_tv:
-            self._season_ctr = _Counter(right, "Season",
+            self._season_ctr = _Counter(prog, "Season",
                                          show["current_season"],
                                          lambda d: self._adjust("season", d))
-            self._season_ctr.pack(anchor="w", pady=2)
-            self._episode_ctr = _Counter(right, "Episode",
+            self._season_ctr.pack(side="left", padx=(0, 20))
+            self._episode_ctr = _Counter(prog, "Episode",
                                           show["current_episode"],
                                           lambda d: self._adjust("episode", d))
-            self._episode_ctr.pack(anchor="w", pady=2)
+            self._episode_ctr.pack(side="left")
         else:
             t = show.get("watch_time_seconds", 0)
             h, m, s = t // 3600, (t % 3600) // 60, t % 60
-            self._hours_ctr = _Counter(right, "Hours",   h,
+            self._hours_ctr = _Counter(prog, "Hours", h,
                                         lambda d: self._adjust("hours",   d))
-            self._hours_ctr.pack(anchor="w", pady=2)
-            self._mins_ctr  = _Counter(right, "Minutes", m,
+            self._hours_ctr.pack(side="left", padx=(0, 12))
+            self._mins_ctr  = _Counter(prog, "Min",   m,
                                         lambda d: self._adjust("minutes", d))
-            self._mins_ctr.pack(anchor="w", pady=2)
-            self._secs_ctr  = _Counter(right, "Seconds", s,
+            self._mins_ctr.pack(side="left", padx=(0, 12))
+            self._secs_ctr  = _Counter(prog, "Sec",   s,
                                         lambda d: self._adjust("seconds", d))
-            self._secs_ctr.pack(anchor="w", pady=2)
+            self._secs_ctr.pack(side="left")
 
-        # Rating (only if set)
-        rating = show.get("rating", 0) or 0
-        if rating:
-            ctk.CTkLabel(right,
-                         text=f"★  {float(rating):.1f} / 5.0",
-                         font=ctk.CTkFont(size=12),
-                         text_color=GOLD,
-                         anchor="w").pack(fill="x", pady=(4, 0))
+        # 3 ─ Thin progress bar
+        fill_val = (min(1.0, show.get("current_episode", 1) / 24.0) if is_tv
+                    else min(1.0, show.get("watch_time_seconds", 0) / 7200.0))
+        bar = ctk.CTkProgressBar(body, height=2,
+                                  fg_color=SURFACE2, progress_color=ACCENT,
+                                  corner_radius=1)
+        bar.pack(fill="x", pady=(0, 8))
+        bar.set(fill_val)
 
-        # Description (only if set, single line)
+        # 4 ─ Description (optional, one line)
         desc = (show.get("description") or "").strip()
         if desc:
-            preview = desc if len(desc) <= 55 else desc[:52] + "…"
-            ctk.CTkLabel(right, text=preview,
+            preview = desc if len(desc) <= 60 else desc[:57] + "…"
+            ctk.CTkLabel(body, text=preview,
                          font=ctk.CTkFont(size=10),
-                         text_color="gray50",
-                         anchor="w").pack(fill="x")
+                         text_color=MUTED, anchor="w").pack(fill="x", pady=(0, 4))
+
+        # 5 ─ Footer: rating + action buttons
+        footer = ctk.CTkFrame(body, fg_color="transparent")
+        footer.pack(fill="x")
+
+        rating = show.get("rating", 0) or 0
+        if rating:
+            ctk.CTkLabel(footer,
+                         text=f"★  {float(rating):.1f} / 5.0",
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=GOLD).pack(side="left")
+        else:
+            ctk.CTkLabel(footer, text="No rating yet",
+                         font=ctk.CTkFont(size=12),
+                         text_color=MUTED).pack(side="left")
+
+        actions = ctk.CTkFrame(footer, fg_color="transparent")
+        actions.pack(side="right")
+        ctk.CTkButton(actions, text="", image=_get_icon("edit", 14),
+                      width=30, height=30, corner_radius=8,
+                      fg_color=SURFACE2, hover_color="#1e2534",
+                      border_width=1, border_color=BORDER_C,
+                      command=lambda: self._on_edit(self._show)).pack(
+                          side="left", padx=(0, 4))
+        ctk.CTkButton(actions, text="", image=_get_icon("delete", 14),
+                      width=30, height=30, corner_radius=8,
+                      fg_color=SURFACE2, hover_color="#2a1212",
+                      border_width=1, border_color=BORDER_C,
+                      command=lambda: self._on_delete(self._show)).pack(side="left")
 
     # ── Copy name ─────────────────────────────────────────────────────────────
 
@@ -702,6 +728,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("KeepTrack")
+        self.configure(fg_color=BG)
         self.geometry("980x680")
         self.minsize(680, 440)
 
@@ -747,80 +774,148 @@ class App(ctk.CTk):
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # Header
-        header = ctk.CTkFrame(self, fg_color=HEADER_BG, corner_radius=0, height=64)
+        # ── Header / Nav ──────────────────────────────────────────────────────
+        header = ctk.CTkFrame(self, fg_color=HEADER_BG, corner_radius=0, height=58)
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
         header.columnconfigure(1, weight=1)
+        header.rowconfigure(0, weight=1)
 
+        # Logo
         logo_f = ctk.CTkFrame(header, fg_color="transparent")
-        logo_f.grid(row=0, column=0, padx=22, pady=14, sticky="w")
+        logo_f.grid(row=0, column=0, padx=28, sticky="w")
         ctk.CTkLabel(logo_f, text="KeepTrack",
                      font=ctk.CTkFont(size=22, weight="bold"),
-                     text_color=ACCENT).pack(side="left")
-        ctk.CTkLabel(logo_f, text="  ·  TV & Movie Tracker",
-                     font=ctk.CTkFont(size=12), text_color="gray45").pack(side="left")
+                     text_color=TEXT_COLOR).pack(side="left")
+        ctk.CTkLabel(logo_f, text="  TV & Movie Tracker",
+                     font=ctk.CTkFont(size=11),
+                     text_color=MUTED).pack(side="left", pady=(3, 0))
 
+        # Nav right
         right_f = ctk.CTkFrame(header, fg_color="transparent")
-        right_f.grid(row=0, column=2, padx=22, pady=14, sticky="e")
+        right_f.grid(row=0, column=2, padx=28, sticky="e")
 
-        self._dot = ctk.CTkLabel(right_f, text="●",
-                                  font=ctk.CTkFont(size=14), text_color="gray35")
-        self._dot.pack(side="left", padx=(0, 4))
-        self._vlc_lbl = ctk.CTkLabel(right_f, text="VLC: Disconnected",
-                                      font=ctk.CTkFont(size=12), text_color="gray45")
-        self._vlc_lbl.pack(side="left", padx=(0, 20))
+        # VLC status badge (pill)
+        self._vlc_badge = ctk.CTkFrame(right_f, fg_color=SURFACE2,
+                                        border_width=1, border_color=BORDER_C,
+                                        corner_radius=20)
+        self._vlc_badge.pack(side="left", padx=(0, 10))
+        self._dot = ctk.CTkLabel(self._vlc_badge, text="●",
+                                  font=ctk.CTkFont(size=8),
+                                  text_color="gray35")
+        self._dot.pack(side="left", padx=(10, 4), pady=7)
+        self._vlc_lbl = ctk.CTkLabel(self._vlc_badge, text="VLC Disconnected",
+                                      font=ctk.CTkFont(size=12, weight="bold"),
+                                      text_color=MUTED)
+        self._vlc_lbl.pack(side="left", padx=(0, 10), pady=7)
 
-        ctk.CTkButton(right_f, text="⚙  Settings", width=98, height=32,
+        ctk.CTkButton(right_f, text="  Settings", width=100, height=32,
                       font=ctk.CTkFont(size=12),
-                      fg_color="gray22", hover_color="gray32",
+                      fg_color=SURFACE2, hover_color=BORDER_C,
+                      border_width=1, border_color=BORDER_C,
+                      corner_radius=8,
                       command=self._open_settings).pack(side="left", padx=(0, 8))
         ctk.CTkButton(right_f, text="＋  Add", width=84, height=32,
-                      font=ctk.CTkFont(size=12),
+                      font=ctk.CTkFont(size=12, weight="bold"),
+                      fg_color=ACCENT, hover_color="#4a7bcc",
+                      corner_radius=8,
                       command=lambda: self._open_edit(None)).pack(side="left")
 
-        # Notification bar
-        self._notif_bar = ctk.CTkFrame(self, fg_color="#0c2b18", corner_radius=0, height=38)
+        # ── Notification bar ──────────────────────────────────────────────────
+        self._notif_bar = ctk.CTkFrame(self, fg_color="#0d1e14", corner_radius=0, height=38)
         self._notif_lbl = ctk.CTkLabel(self._notif_bar, text="",
                                         font=ctk.CTkFont(size=12), text_color=GREEN)
         self._notif_lbl.pack(fill="x", padx=24, pady=9)
 
-        # Content
+        # ── Content ───────────────────────────────────────────────────────────
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=2, column=0, sticky="nsew", padx=22, pady=18)
-        content.rowconfigure(1, weight=1)
+        content.grid(row=2, column=0, sticky="nsew", padx=28, pady=(16, 24))
+        content.rowconfigure(2, weight=1)
         content.columnconfigure(0, weight=1)
 
-        search_row = ctk.CTkFrame(content, fg_color="transparent")
-        search_row.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        # Toolbar: tabs (left) + search + rating (right) in one row
+        toolbar = ctk.CTkFrame(content, fg_color="transparent")
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        ctk.CTkLabel(search_row, text="Search:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 8))
+        # Status filter tabs (custom pill buttons)
+        _TAB_COLORS = {
+            "All":      TEXT_COLOR,
+            "Watching": ACCENT,
+            "Finished": GREEN,
+            "Wishlist": "#b45be8",
+        }
+        tabs_bg = ctk.CTkFrame(toolbar, fg_color=SURFACE,
+                                border_width=1, border_color=BORDER_C,
+                                corner_radius=10)
+        tabs_bg.pack(side="left")
+        self._active_tab = "All"
+        self._tab_btns: dict = {}
+        for label in ["All", "Watching", "Finished", "Wishlist"]:
+            btn = ctk.CTkButton(
+                tabs_bg,
+                text=label,
+                width=82, height=30,
+                corner_radius=7,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color=SURFACE2 if label == "All" else "transparent",
+                hover_color=SURFACE2,
+                text_color=_TAB_COLORS[label] if label == "All" else MUTED,
+                command=lambda l=label: self._set_tab(l),
+            )
+            btn.pack(side="left", padx=4, pady=4)
+            self._tab_btns[label] = btn
+
+        # Search + rating filter (right-aligned)
+        search_area = ctk.CTkFrame(toolbar, fg_color="transparent")
+        search_area.pack(side="right")
+
         self._search_var = ctk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._refresh())
-        ctk.CTkEntry(search_row, textvariable=self._search_var,
-                     placeholder_text="Filter…", width=220, height=34).pack(side="left")
+        ctk.CTkEntry(search_area,
+                     textvariable=self._search_var,
+                     placeholder_text="Search titles…",
+                     width=200, height=34,
+                     fg_color=SURFACE, border_color=BORDER_C,
+                     corner_radius=8).pack(side="left", padx=(0, 8))
 
-        # Rating filter
-        ctk.CTkLabel(search_row, text="Rating:",
-                     font=ctk.CTkFont(size=13)).pack(side="left", padx=(18, 8))
-        self._rating_filter_var = ctk.StringVar(value="All")
+        self._rating_filter_var = ctk.StringVar(value="All Ratings")
         self._rating_filter_var.trace_add("write", lambda *_: self._refresh())
         ctk.CTkOptionMenu(
-            search_row,
+            search_area,
             variable=self._rating_filter_var,
-            values=["All", "★ ≥ 1.0", "★ ≥ 2.0", "★ ≥ 3.0", "★ ≥ 4.0", "★ ≥ 4.5"],
-            width=110, height=34,
-            fg_color="gray22", button_color="gray30", button_hover_color="gray40",
+            values=["All Ratings", "★ ≥ 1.0", "★ ≥ 2.0", "★ ≥ 3.0", "★ ≥ 4.0", "★ ≥ 4.5"],
+            width=120, height=34,
+            fg_color=SURFACE, button_color=SURFACE2, button_hover_color=BORDER_C,
+            corner_radius=8,
         ).pack(side="left")
 
-        self._count_lbl = ctk.CTkLabel(search_row, text="",
-                                        font=ctk.CTkFont(size=12), text_color="gray50")
-        self._count_lbl.pack(side="right")
+        # Entry count label
+        self._count_lbl = ctk.CTkLabel(content, text="",
+                                        font=ctk.CTkFont(size=12),
+                                        text_color=MUTED, anchor="w")
+        self._count_lbl.grid(row=1, column=0, sticky="w", pady=(2, 6))
 
+        # Scrollable card grid
         self._scroll = ctk.CTkScrollableFrame(content, fg_color="transparent")
-        self._scroll.grid(row=1, column=0, sticky="nsew")
+        self._scroll.grid(row=2, column=0, sticky="nsew")
         self._scroll.columnconfigure((0, 1), weight=1)
+
+    # ── Tabs ───────────────────────────────────────────────────────────────────
+
+    def _set_tab(self, label: str):
+        _TAB_ACTIVE_COLORS = {
+            "All":      TEXT_COLOR,
+            "Watching": ACCENT,
+            "Finished": GREEN,
+            "Wishlist": "#b45be8",
+        }
+        self._active_tab = label
+        for lbl, btn in self._tab_btns.items():
+            if lbl == label:
+                btn.configure(fg_color=SURFACE2, text_color=_TAB_ACTIVE_COLORS[lbl])
+            else:
+                btn.configure(fg_color="transparent", text_color=MUTED)
+        self._refresh()
 
     # ── Data ──────────────────────────────────────────────────────────────────
 
@@ -831,8 +926,8 @@ class App(ctk.CTk):
             entries = [e for e in entries if q in e["name"].lower()]
 
         # Rating filter
-        rf = self._rating_filter_var.get() if hasattr(self, "_rating_filter_var") else "All"
-        if rf != "All":
+        rf = self._rating_filter_var.get() if hasattr(self, "_rating_filter_var") else "All Ratings"
+        if rf != "All Ratings":
             threshold = float(rf.split("≥")[-1].strip())
             entries = [e for e in entries if (e.get("rating") or 0) >= threshold]
 
@@ -841,7 +936,7 @@ class App(ctk.CTk):
 
         if not entries:
             msg = ("No results match your search."
-                   if (q or rf != "All") else
+                   if (q or rf != "All Ratings") else
                    "Nothing tracked yet.\nAdd an entry or play something in VLC!")
             ctk.CTkLabel(self._scroll, text=msg,
                          font=ctk.CTkFont(size=14), text_color="gray45",
@@ -849,30 +944,25 @@ class App(ctk.CTk):
             self._count_lbl.configure(text="")
             return
 
-        SECTIONS = [
-            ("watching", "▶  Currently Watching"),
-            ("finished", "✓  Finished"),
-            ("wishlist", "☆  Wishlist"),
-        ]
+        _FILTER_MAP = {
+            "Watching": "watching",
+            "Finished": "finished",
+            "Wishlist": "wishlist",
+        }
+        active_filter = getattr(self, "_active_tab", "All")
+        if active_filter != "All":
+            entries = [e for e in entries
+                       if (e.get("status") or "watching") == _FILTER_MAP[active_filter]]
+
+        SECTIONS = ["watching", "finished", "wishlist"]
 
         grid_row = 0
         total    = 0
 
-        for status_key, section_title in SECTIONS:
+        for status_key in SECTIONS:
             group = [e for e in entries if (e.get("status") or "watching") == status_key]
             if not group:
                 continue
-
-            # Section header
-            hdr = ctk.CTkFrame(self._scroll, fg_color="transparent")
-            hdr.grid(row=grid_row, column=0, columnspan=2, sticky="ew",
-                     padx=9, pady=(18 if grid_row > 0 else 4, 2))
-            ctk.CTkLabel(hdr, text=section_title,
-                         font=ctk.CTkFont(size=12, weight="bold"),
-                         text_color="gray55").pack(side="left")
-            ctk.CTkFrame(hdr, height=1, fg_color="gray25").pack(
-                side="left", fill="x", expand=True, padx=(10, 0))
-            grid_row += 1
 
             # Cards
             for i, entry in enumerate(group):
@@ -907,11 +997,13 @@ class App(ctk.CTk):
 
     def _set_vlc_status(self, connected: bool):
         if connected:
+            self._vlc_badge.configure(fg_color="#0d1e14", border_color="#1a3828")
             self._dot.configure(text_color=GREEN)
-            self._vlc_lbl.configure(text="VLC: Connected", text_color=GREEN)
+            self._vlc_lbl.configure(text="VLC Connected", text_color=GREEN)
         else:
+            self._vlc_badge.configure(fg_color=SURFACE2, border_color=BORDER_C)
             self._dot.configure(text_color="gray35")
-            self._vlc_lbl.configure(text="VLC: Disconnected", text_color="gray45")
+            self._vlc_lbl.configure(text="VLC Disconnected", text_color=MUTED)
 
     # ── Notification ──────────────────────────────────────────────────────────
 
