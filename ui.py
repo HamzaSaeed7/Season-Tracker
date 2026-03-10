@@ -493,7 +493,7 @@ class EditDialog(ctk.CTkToplevel):
         super().__init__(parent)
         is_new = entry is None
         self.title("Add Entry" if is_new else f"Edit  —  {entry['name']}")
-        self.geometry("420x560")
+        self.geometry("420x610")
         self.resizable(False, False)
         # Defer grab_set/lift — calling grab_set before the window is drawn
         # causes CTkToplevel to swallow all events and become unresponsive.
@@ -504,10 +504,14 @@ class EditDialog(ctk.CTkToplevel):
         # pending poster path chosen this session (not yet saved to DB)
         self._pending_poster: str = entry.get("poster_path", "") or "" if entry else ""
 
-        initial_type = "show" if entry is None else entry.get("type", "show")
+        initial_type   = "show" if entry is None else entry.get("type", "show")
+        initial_status = "watching" if entry is None else (entry.get("status") or "watching")
         t = 0 if entry is None else (entry.get("watch_time_seconds") or 0)
         existing_rating = 0 if entry is None else (entry.get("rating") or 0)
         existing_desc   = "" if entry is None else (entry.get("description") or "")
+
+        _STATUS_LABELS = {"watching": "Watching", "finished": "Finished", "wishlist": "Wishlist"}
+        _STATUS_KEYS   = {"Watching": "watching", "Finished": "finished", "Wishlist": "wishlist"}
 
         # ── Title ─────────────────────────────────────────────────────────────
         ctk.CTkLabel(self,
@@ -519,7 +523,14 @@ class EditDialog(ctk.CTkToplevel):
             self, values=["TV Show", "Movie"],
             command=self._on_type_change)
         self._type_seg.set("TV Show" if initial_type == "show" else "Movie")
-        self._type_seg.pack(pady=(0, 10))
+        self._type_seg.pack(pady=(0, 6))
+
+        # ── Status selector ────────────────────────────────────────────────────
+        self._status_seg = ctk.CTkSegmentedButton(
+            self, values=["Watching", "Finished", "Wishlist"])
+        self._status_seg.set(_STATUS_LABELS[initial_status])
+        self._status_seg.pack(pady=(0, 10))
+        self._status_keys = _STATUS_KEYS
 
         # ── Form (grid) ────────────────────────────────────────────────────────
         self._form = ctk.CTkFrame(self, fg_color="transparent")
@@ -655,9 +666,10 @@ class EditDialog(ctk.CTkToplevel):
             messagebox.showerror("Error", "Name cannot be empty.", parent=self)
             return
 
-        is_tv = self._type_seg.get() == "TV Show"
-        rating  = self._rating_slider.rating
-        desc    = self._desc_box.get("1.0", "end-1c").strip()
+        is_tv  = self._type_seg.get() == "TV Show"
+        rating = self._rating_slider.rating
+        desc   = self._desc_box.get("1.0", "end-1c").strip()
+        status = self._status_keys[self._status_seg.get()]
 
         if is_tv:
             try:
@@ -668,7 +680,7 @@ class EditDialog(ctk.CTkToplevel):
                                      "Season and episode must be numbers.", parent=self)
                 return
             self._on_save(name, "show", season, episode, 0,
-                          rating, desc, self._pending_poster, self._entry)
+                          rating, desc, self._pending_poster, self._entry, status)
         else:
             try:
                 h = int(self._hours_var.get())
@@ -679,7 +691,7 @@ class EditDialog(ctk.CTkToplevel):
                                      "Hours, minutes, and seconds must be numbers.", parent=self)
                 return
             self._on_save(name, "movie", 1, 1, h * 3600 + m * 60 + s,
-                          rating, desc, self._pending_poster, self._entry)
+                          rating, desc, self._pending_poster, self._entry, status)
 
         self.after(10, self.destroy)
 
@@ -829,7 +841,7 @@ class App(ctk.CTk):
 
         if not entries:
             msg = ("No results match your search."
-                   if q else
+                   if (q or rf != "All") else
                    "Nothing tracked yet.\nAdd an entry or play something in VLC!")
             ctk.CTkLabel(self._scroll, text=msg,
                          font=ctk.CTkFont(size=14), text_color="gray45",
@@ -837,15 +849,43 @@ class App(ctk.CTk):
             self._count_lbl.configure(text="")
             return
 
-        for i, entry in enumerate(entries):
-            card = ShowCard(self._scroll, entry,
-                            on_edit=self._open_edit,
-                            on_delete=self._delete_entry,
-                            on_copy=lambda n: self._notify(f"Copied:  {n}"))
-            card.grid(row=i // 2, column=i % 2, padx=9, pady=9, sticky="ew")
+        SECTIONS = [
+            ("watching", "▶  Currently Watching"),
+            ("finished", "✓  Finished"),
+            ("wishlist", "☆  Wishlist"),
+        ]
 
-        n = len(entries)
-        self._count_lbl.configure(text=f"{n} entr{'ies' if n != 1 else 'y'}")
+        grid_row = 0
+        total    = 0
+
+        for status_key, section_title in SECTIONS:
+            group = [e for e in entries if (e.get("status") or "watching") == status_key]
+            if not group:
+                continue
+
+            # Section header
+            hdr = ctk.CTkFrame(self._scroll, fg_color="transparent")
+            hdr.grid(row=grid_row, column=0, columnspan=2, sticky="ew",
+                     padx=9, pady=(18 if grid_row > 0 else 4, 2))
+            ctk.CTkLabel(hdr, text=section_title,
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color="gray55").pack(side="left")
+            ctk.CTkFrame(hdr, height=1, fg_color="gray25").pack(
+                side="left", fill="x", expand=True, padx=(10, 0))
+            grid_row += 1
+
+            # Cards
+            for i, entry in enumerate(group):
+                card = ShowCard(self._scroll, entry,
+                                on_edit=self._open_edit,
+                                on_delete=self._delete_entry,
+                                on_copy=lambda n: self._notify(f"Copied:  {n}"))
+                card.grid(row=grid_row + i // 2, column=i % 2,
+                          padx=9, pady=9, sticky="ew")
+            grid_row += (len(group) + 1) // 2
+            total += len(group)
+
+        self._count_lbl.configure(text=f"{total} entr{'ies' if total != 1 else 'y'}")
 
     # ── VLC callbacks ─────────────────────────────────────────────────────────
 
@@ -902,7 +942,8 @@ class App(ctk.CTk):
     def _save_entry(self, name: str, entry_type: str, season: int,
                     episode: int, watch_time: int,
                     rating: float, description: str,
-                    pending_poster: str, existing: Optional[dict]):
+                    pending_poster: str, existing: Optional[dict],
+                    status: str = "watching"):
         """
         Persist the entry.  If a new poster image was chosen, copy it into
         the posters/ folder so it survives the original file moving/deleting.
@@ -912,26 +953,23 @@ class App(ctk.CTk):
 
         if pending_poster and os.path.isfile(pending_poster):
             if existing:
-                # Copy now (we have the DB id already)
                 poster_path = _copy_poster(pending_poster, existing["id"])
             else:
-                # For new entries we'll copy after insertion using a temp id
                 poster_path = pending_poster  # will be fixed up below
 
         if existing:
             database.update_entry(existing["id"], name, entry_type,
                                    season, episode, watch_time,
-                                   rating, description, poster_path)
+                                   rating, description, poster_path, status)
         else:
             database.add_entry(name, entry_type, season, episode, watch_time,
-                               rating, description, poster_path="")
-            # Get the newly created row to copy the poster with the real id
+                               rating, description, poster_path="", status=status)
             row = database.get_show_by_name(name)
             if row and pending_poster and os.path.isfile(pending_poster):
                 real_poster = _copy_poster(pending_poster, row["id"])
                 database.update_entry(row["id"], name, entry_type,
                                        season, episode, watch_time,
-                                       rating, description, real_poster)
+                                       rating, description, real_poster, status)
 
         self._refresh()
 

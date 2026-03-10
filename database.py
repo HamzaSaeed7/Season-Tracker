@@ -57,6 +57,7 @@ def init_db():
         ("rating",             "ALTER TABLE shows ADD COLUMN rating INTEGER DEFAULT 0"),
         ("description",        "ALTER TABLE shows ADD COLUMN description TEXT DEFAULT ''"),
         ("poster_path",        "ALTER TABLE shows ADD COLUMN poster_path TEXT DEFAULT ''"),
+        ("status",             "ALTER TABLE shows ADD COLUMN status TEXT DEFAULT 'watching'"),
     ]:
         if col not in existing_cols:
             conn.execute(ddl)
@@ -142,16 +143,16 @@ def upsert_movie(title: str, position_seconds: int) -> bool:
 
 def add_entry(name: str, entry_type: str, season: int = 1, episode: int = 1,
               watch_time_seconds: int = 0, rating: int = 0,
-              description: str = "", poster_path: str = ""):
+              description: str = "", poster_path: str = "", status: str = "watching"):
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT OR IGNORE INTO shows"
         " (name, type, current_season, current_episode, watch_time_seconds,"
-        "  rating, description, poster_path, last_watched)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "  rating, description, poster_path, status, last_watched)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (name, entry_type, season, episode, watch_time_seconds,
-         rating, description, poster_path, now),
+         rating, description, poster_path, status, now),
     )
     conn.commit()
     conn.close()
@@ -159,15 +160,16 @@ def add_entry(name: str, entry_type: str, season: int = 1, episode: int = 1,
 
 def update_entry(show_id: int, name: str, entry_type: str, season: int,
                  episode: int, watch_time_seconds: int,
-                 rating: int = 0, description: str = "", poster_path: str = ""):
+                 rating: int = 0, description: str = "", poster_path: str = "",
+                 status: str = "watching"):
     conn = get_connection()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "UPDATE shows SET name=?, type=?, current_season=?, current_episode=?,"
-        " watch_time_seconds=?, rating=?, description=?, poster_path=?,"
+        " watch_time_seconds=?, rating=?, description=?, poster_path=?, status=?,"
         " last_watched=? WHERE id=?",
         (name, entry_type, season, episode, watch_time_seconds,
-         rating, description, poster_path, now, show_id),
+         rating, description, poster_path, status, now, show_id),
     )
     conn.commit()
     conn.close()
