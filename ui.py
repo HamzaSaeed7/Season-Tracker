@@ -83,11 +83,11 @@ def _load_poster_image(poster_path: str) -> Optional[ctk.CTkImage]:
         img = Image.open(poster_path).convert("RGBA")
         img = ImageOps.fit(img, (POSTER_W, POSTER_H), Image.LANCZOS)
 
-        # Rounded-corner mask (radius must match _Poster corner_radius)
+        # Mask: rounded left corners only (right side flush against card body)
         mask = Image.new("L", (POSTER_W, POSTER_H), 0)
-        ImageDraw.Draw(mask).rounded_rectangle(
-            [0, 0, POSTER_W - 1, POSTER_H - 1], radius=14, fill=255
-        )
+        d = ImageDraw.Draw(mask)
+        d.rounded_rectangle([0, 0, POSTER_W - 1, POSTER_H - 1], radius=12, fill=255)
+        d.rectangle([POSTER_W // 2, 0, POSTER_W - 1, POSTER_H - 1], fill=255)
         img.putalpha(mask)
 
         return ctk.CTkImage(light_image=img, dark_image=img, size=(POSTER_W, POSTER_H))
@@ -257,7 +257,7 @@ class _RatingSlider(ctk.CTkFrame):
 
     def __init__(self, parent, initial: float = 0.0, **kw):
         super().__init__(parent, fg_color="transparent", **kw)
-        self._var = ctk.DoubleVar(value=float(initial))
+        self._value = round(float(initial), 1)
 
         ctk.CTkLabel(self, text="0", font=ctk.CTkFont(size=11),
                      text_color="gray50").pack(side="left", padx=(0, 4))
@@ -265,22 +265,23 @@ class _RatingSlider(ctk.CTkFrame):
         self._slider = ctk.CTkSlider(
             self, from_=0, to=5,
             number_of_steps=50,          # 0.1 per step
-            variable=self._var,
             width=180,
             command=self._on_change,
         )
+        self._slider.set(self._value)
         self._slider.pack(side="left")
 
         ctk.CTkLabel(self, text="5", font=ctk.CTkFont(size=11),
                      text_color="gray50").pack(side="left", padx=(4, 10))
 
-        self._lbl = ctk.CTkLabel(self, text=self._fmt(initial),
+        self._lbl = ctk.CTkLabel(self, text=self._fmt(self._value),
                                   font=ctk.CTkFont(size=14, weight="bold"),
                                   text_color=GOLD, width=42, anchor="w")
         self._lbl.pack(side="left")
 
     def _on_change(self, v):
-        self._lbl.configure(text=self._fmt(round(v, 1)))
+        self._value = round(float(v), 1)
+        self._lbl.configure(text=self._fmt(self._value))
 
     @staticmethod
     def _fmt(v: float) -> str:
@@ -288,7 +289,7 @@ class _RatingSlider(ctk.CTkFrame):
 
     @property
     def rating(self) -> float:
-        return round(self._var.get(), 1)
+        return self._value
 
 
 # ── Show / Movie Card ─────────────────────────────────────────────────────────
@@ -521,6 +522,7 @@ class EditDialog(ctk.CTkToplevel):
         self.title("Add Entry" if is_new else f"Edit  —  {entry['name']}")
         self.geometry("420x610")
         self.resizable(False, False)
+        self.configure(fg_color=SURFACE)
         # Defer grab_set/lift — calling grab_set before the window is drawn
         # causes CTkToplevel to swallow all events and become unresponsive.
         self.after(150, lambda: (self.lift(), self.focus_force(), self.grab_set()))
@@ -542,19 +544,31 @@ class EditDialog(ctk.CTkToplevel):
         # ── Title ─────────────────────────────────────────────────────────────
         ctk.CTkLabel(self,
                      text="Add New Entry" if is_new else f"Edit  ·  {entry['name']}",
-                     font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(18, 8))
+                     font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=TEXT_COLOR).pack(pady=(18, 8))
 
         # ── Type selector ──────────────────────────────────────────────────────
         self._type_seg = ctk.CTkSegmentedButton(
             self, values=["TV Show", "Movie"],
+            fg_color=SURFACE2,
+            selected_color=ACCENT, selected_hover_color=ACCENT,
+            unselected_color=SURFACE2, unselected_hover_color=BORDER_C,
+            text_color=TEXT_COLOR,
             command=self._on_type_change)
         self._type_seg.set("TV Show" if initial_type == "show" else "Movie")
         self._type_seg.pack(pady=(0, 6))
 
         # ── Status selector ────────────────────────────────────────────────────
+        _STATUS_SELECTED = {"Watching": ACCENT, "Finished": GREEN, "Wishlist": "#b45be8"}
+        active_status_label = _STATUS_LABELS[initial_status]
         self._status_seg = ctk.CTkSegmentedButton(
-            self, values=["Watching", "Finished", "Wishlist"])
-        self._status_seg.set(_STATUS_LABELS[initial_status])
+            self, values=["Watching", "Finished", "Wishlist"],
+            fg_color=SURFACE2,
+            selected_color=_STATUS_SELECTED[active_status_label],
+            selected_hover_color=_STATUS_SELECTED[active_status_label],
+            unselected_color=SURFACE2, unselected_hover_color=BORDER_C,
+            text_color=TEXT_COLOR)
+        self._status_seg.set(active_status_label)
         self._status_seg.pack(pady=(0, 10))
         self._status_keys = _STATUS_KEYS
 
@@ -563,36 +577,45 @@ class EditDialog(ctk.CTkToplevel):
         self._form.pack(padx=36, fill="x")
         self._form.columnconfigure(1, weight=1)
 
+        _lbl_kw = dict(anchor="w", text_color=MUTED, font=ctk.CTkFont(size=12))
+        _ent_kw = dict(fg_color=SURFACE2, border_color=BORDER_C,
+                       text_color=TEXT_COLOR, corner_radius=8)
+
         # Row 0: Name
-        ctk.CTkLabel(self._form, text="Name:", anchor="w").grid(
+        ctk.CTkLabel(self._form, text="Name:", **_lbl_kw).grid(
             row=0, column=0, sticky="w", pady=7)
         self._name_var = ctk.StringVar(value="" if is_new else entry["name"])
-        ctk.CTkEntry(self._form, textvariable=self._name_var).grid(
+        ctk.CTkEntry(self._form, textvariable=self._name_var, **_ent_kw).grid(
             row=0, column=1, sticky="ew", padx=(12, 0), pady=7)
 
         # TV Show rows
-        self._season_lbl = ctk.CTkLabel(self._form, text="Season:", anchor="w")
+        self._season_lbl = ctk.CTkLabel(self._form, text="Season:", **_lbl_kw)
         self._season_var = ctk.StringVar(
             value=str(1 if is_new else (entry.get("current_season") or 1)))
-        self._season_ent = ctk.CTkEntry(self._form, textvariable=self._season_var, width=110)
+        self._season_ent = ctk.CTkEntry(self._form, textvariable=self._season_var,
+                                        width=110, **_ent_kw)
 
-        self._ep_lbl = ctk.CTkLabel(self._form, text="Episode:", anchor="w")
+        self._ep_lbl = ctk.CTkLabel(self._form, text="Episode:", **_lbl_kw)
         self._ep_var = ctk.StringVar(
             value=str(1 if is_new else (entry.get("current_episode") or 1)))
-        self._ep_ent = ctk.CTkEntry(self._form, textvariable=self._ep_var, width=110)
+        self._ep_ent = ctk.CTkEntry(self._form, textvariable=self._ep_var,
+                                    width=110, **_ent_kw)
 
         # Movie rows
-        self._hours_lbl = ctk.CTkLabel(self._form, text="Hours:", anchor="w")
+        self._hours_lbl = ctk.CTkLabel(self._form, text="Hours:", **_lbl_kw)
         self._hours_var = ctk.StringVar(value=str(t // 3600))
-        self._hours_ent = ctk.CTkEntry(self._form, textvariable=self._hours_var, width=110)
+        self._hours_ent = ctk.CTkEntry(self._form, textvariable=self._hours_var,
+                                       width=110, **_ent_kw)
 
-        self._mins_lbl = ctk.CTkLabel(self._form, text="Minutes:", anchor="w")
+        self._mins_lbl = ctk.CTkLabel(self._form, text="Minutes:", **_lbl_kw)
         self._mins_var = ctk.StringVar(value=str((t % 3600) // 60))
-        self._mins_ent = ctk.CTkEntry(self._form, textvariable=self._mins_var, width=110)
+        self._mins_ent = ctk.CTkEntry(self._form, textvariable=self._mins_var,
+                                      width=110, **_ent_kw)
 
-        self._secs_lbl = ctk.CTkLabel(self._form, text="Seconds:", anchor="w")
+        self._secs_lbl = ctk.CTkLabel(self._form, text="Seconds:", **_lbl_kw)
         self._secs_var = ctk.StringVar(value=str(t % 60))
-        self._secs_ent = ctk.CTkEntry(self._form, textvariable=self._secs_var, width=110)
+        self._secs_ent = ctk.CTkEntry(self._form, textvariable=self._secs_var,
+                                      width=110, **_ent_kw)
 
         # Grid all dynamic rows once so grid_remove() works later
         for (lbl, ent), row in zip(
@@ -613,33 +636,42 @@ class EditDialog(ctk.CTkToplevel):
         poster_row.pack(padx=36, fill="x", pady=(6, 0))
 
         ctk.CTkLabel(poster_row, text="Poster:", anchor="w",
-                     width=60).pack(side="left")
+                     width=60, text_color=MUTED,
+                     font=ctk.CTkFont(size=12)).pack(side="left")
 
         self._poster_lbl = ctk.CTkLabel(
             poster_row,
             text=self._short_poster_name(self._pending_poster),
-            font=ctk.CTkFont(size=11), text_color="gray50",
+            font=ctk.CTkFont(size=11), text_color=MUTED,
             anchor="w")
         self._poster_lbl.pack(side="left", padx=(10, 0), expand=True, fill="x")
 
         ctk.CTkButton(poster_row, text="Browse…", width=80, height=28,
                       font=ctk.CTkFont(size=12),
-                      fg_color="gray22", hover_color="gray32",
+                      fg_color=SURFACE2, hover_color=BORDER_C,
+                      border_width=1, border_color=BORDER_C,
+                      text_color=TEXT_COLOR,
                       command=self._browse_poster).pack(side="right")
 
         # ── Rating ────────────────────────────────────────────────────────────
         rating_row = ctk.CTkFrame(self, fg_color="transparent")
         rating_row.pack(padx=36, fill="x", pady=(10, 0))
         ctk.CTkLabel(rating_row, text="Rating:", anchor="w",
-                     width=60).pack(side="left")
+                     width=60, text_color=MUTED,
+                     font=ctk.CTkFont(size=12)).pack(side="left")
         self._rating_slider = _RatingSlider(rating_row, initial=existing_rating)
         self._rating_slider.pack(side="left", padx=(10, 0))
 
         # ── Notes ─────────────────────────────────────────────────────────────
         ctk.CTkLabel(self, text="Notes  (optional):", anchor="w",
-                     font=ctk.CTkFont(size=12)).pack(padx=36, fill="x", pady=(10, 2))
+                     font=ctk.CTkFont(size=12),
+                     text_color=MUTED).pack(padx=36, fill="x", pady=(10, 2))
         self._desc_box = ctk.CTkTextbox(self, height=64,
                                          font=ctk.CTkFont(size=12),
+                                         fg_color=SURFACE2,
+                                         border_color=BORDER_C,
+                                         border_width=1,
+                                         text_color=TEXT_COLOR,
                                          corner_radius=8)
         self._desc_box.pack(padx=36, fill="x")
         if existing_desc:
@@ -649,9 +681,13 @@ class EditDialog(ctk.CTkToplevel):
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(pady=16)
         ctk.CTkButton(btns, text="Save", width=110,
+                      fg_color=ACCENT, hover_color="#4a7cdc",
+                      text_color="white",
                       command=self._save).pack(side="left", padx=6)
         ctk.CTkButton(btns, text="Cancel", width=110,
-                      fg_color="gray25", hover_color="gray35",
+                      fg_color=SURFACE2, hover_color=BORDER_C,
+                      border_width=1, border_color=BORDER_C,
+                      text_color=MUTED,
                       command=lambda: self.after(10, self.destroy)).pack(side="left", padx=6)
 
     # ── Poster helpers ────────────────────────────────────────────────────────
