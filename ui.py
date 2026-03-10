@@ -530,7 +530,8 @@ class EditDialog(ctk.CTkToplevel):
         self._entry   = entry
         self._on_save = on_save
         # pending poster path chosen this session (not yet saved to DB)
-        self._pending_poster: str = entry.get("poster_path", "") or "" if entry else ""
+        # Start empty — existing poster is preserved in _save_entry via entry["poster_path"]
+        self._pending_poster: str = ""
 
         initial_type   = "show" if entry is None else entry.get("type", "show")
         initial_status = "watching" if entry is None else (entry.get("status") or "watching")
@@ -639,9 +640,10 @@ class EditDialog(ctk.CTkToplevel):
                      width=60, text_color=MUTED,
                      font=ctk.CTkFont(size=12)).pack(side="left")
 
+        _existing_poster = entry.get("poster_path", "") if entry else ""
         self._poster_lbl = ctk.CTkLabel(
             poster_row,
-            text=self._short_poster_name(self._pending_poster),
+            text=self._short_poster_name(_existing_poster),
             font=ctk.CTkFont(size=11), text_color=MUTED,
             anchor="w")
         self._poster_lbl.pack(side="left", padx=(10, 0), expand=True, fill="x")
