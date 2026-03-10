@@ -4,9 +4,12 @@ import json
 import os
 import shutil
 import sys
+import threading
 import xml.etree.ElementTree as ET
 from tkinter import messagebox, filedialog
 from typing import Optional
+
+import pystray
 
 
 def _resource_dir() -> str:
@@ -704,6 +707,9 @@ class App(ctk.CTk):
         self._build_ui()
         self._refresh()
         self._monitor.start()
+        self._tray = self._create_tray()
+        threading.Thread(target=self._tray.run, daemon=True).start()
+        self.bind("<Unmap>", self._on_minimize)
 
     # ── Config ────────────────────────────────────────────────────────────────
 
@@ -943,8 +949,46 @@ class App(ctk.CTk):
                     pass
             self._refresh()
 
+    # ── System tray ───────────────────────────────────────────────────────────
+
+    def _create_tray(self) -> pystray.Icon:
+        # Draw a simple tray icon — blue rounded square with "KT"
+        size = 64
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=14,
+                               fill=(77, 166, 255, 255))
+        draw.text((size // 2 - 10, size // 2 - 10), "KT", fill="white")
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Show KeepTrack", self._tray_show, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", self._tray_quit),
+        )
+        return pystray.Icon("KeepTrack", img, "KeepTrack", menu)
+
+    def _on_minimize(self, event):
+        if event.widget is self:
+            self.withdraw()          # hide from taskbar
+
+    def _tray_show(self, icon=None, item=None):
+        self.after(0, self._show_window)
+
+    def _show_window(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _tray_quit(self, icon=None, item=None):
+        self._tray.stop()
+        self.after(0, self.on_close)
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def on_close(self):
         self._monitor.stop()
+        try:
+            self._tray.stop()
+        except Exception:
+            pass
         self.destroy()
